@@ -54,10 +54,14 @@ from datetime import datetime, timezone
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_FIELDS = ["subject", "market", "goal", "focus", "data_source"]
+VALID_FIELDS = ["subject", "market", "target_user", "goal", "focus", "data_source"]
 FIELD_OPTIONS = {
-    "goal": ["product", "marketing", "quality"],
+    # target_user: multiple-choice (who is running the analysis)
+    "target_user": ["product", "marketing", "quality"],
+    # data_source: multiple-choice (which platforms)
     "data_source": ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit", "All"],
+    # goal: free-text — no validation, any non-empty string accepted
+    # subject, market, focus: free-text — no validation
 }
 MAX_RETRIES = 2  # After this many failed attempts, agent should use default
 
@@ -160,13 +164,13 @@ def respond_parameter(
     state = _load_state(session_id)
     retries = state["retries"].get(field, 1)
 
-    # Validate goal values
-    if field == "goal" and value.lower() not in FIELD_OPTIONS["goal"]:
+    # Validate target_user values (goal is free-text — no validation)
+    if field == "target_user" and value.lower() not in FIELD_OPTIONS["target_user"]:
         return {
             "status": "invalid_value",
             "missing_field": field,
             "value_received": value,
-            "valid_options": FIELD_OPTIONS["goal"],
+            "valid_options": FIELD_OPTIONS["target_user"],
             "instruction": "Value is not valid. Call request_parameter again for this field.",
         }
 

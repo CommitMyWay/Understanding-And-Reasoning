@@ -1,39 +1,24 @@
 """
 conversation_planner.py
 -----------------------
-Builds a structured analysis plan from a fully resolved intent object
-and outputs the final flat intent JSON ready for downstream skills.
+Builds a structured analysis plan from a fully resolved intent object.
+
+Changes:
+  - Plans are keyed by target_user (product/marketing/quality) not goal
+  - goal (free-text research objective) is woven into plan steps and summary
+  - Plan confirmation message is conversational: shows goal, target_user, sources,
+    and invites the user to adjust or confirm naturally
 
 Two modes:
-  - initial   : full plan for a new analysis request
+  - initial   : full 6-step plan for a new analysis
   - deep_dive : focused sub-plan for drilling into a specific insight
 
 Usage (CLI):
     python tools/conversation_planner.py \
-        --intent '{"subject":"MoMo","market":"Vietnam","goal":"product","focus":null,"filters":{"time_range":"last_90_days","platform":"all","sentiment":"all","keywords":[]},"clarifications_done":["market","goal"],"plan_steps":[]}' \
+        --intent '{"subject":"MoMo","market":"Vietnam","target_user":"quality",
+                   "goal":"understand crash patterns in payment flow",
+                   "data_source":["App Store","CH Play"],...}' \
         --mode initial
-
-    python tools/conversation_planner.py \
-        --intent '{"subject":"MoMo","market":"Vietnam","goal":"product","focus":"Login",...}' \
-        --mode deep_dive
-
-Output (stdout, JSON):
-    {
-        "subject": "MoMo",
-        "market": "Vietnam",
-        "goal": "product",
-        "focus": null,
-        "filters": { "time_range": "last_90_days", "platform": "all", "sentiment": "all", "keywords": [] },
-        "clarifications_done": ["market", "goal"],
-        "plan_steps": [
-            "Fetch MoMo product reviews from Vietnam market (last 90 days, all platforms)",
-            "Cluster complaints by feature area using topic modelling",
-            "Rank feature clusters by complaint volume and negative sentiment score",
-            "Identify top-3 pain points with representative user quotes",
-            "Flag anomalies and sudden complaint spikes by date"
-        ],
-        "_plan_summary": "I'll fetch MoMo reviews from Vietnam, cluster complaints by feature, and surface the top pain points."
-    }
 """
 
 import argparse
@@ -41,25 +26,21 @@ import json
 import sys
 
 # ---------------------------------------------------------------------------
-# Plan templates
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Role labels shown in plan summary
+# Role labels
 # ---------------------------------------------------------------------------
 
 ROLE_LABELS = {
-    "product": "Product Owner (PO)",
+    "product":   "Product (PO)",
     "marketing": "Marketing (MKT)",
-    "quality": "Quality Engineering (QE)",
+    "quality":   "Quality Engineering (QE)",
 }
 
 # ---------------------------------------------------------------------------
-# initial mode: 6-step role-based plan templates
+# 6-step plan templates keyed by target_user
 # ---------------------------------------------------------------------------
 
 INITIAL_PLAN_TEMPLATES = {
-    # PO lens: understand what to build / fix next on the roadmap
+    # PO lens: what to build / fix next on the roadmap
     "product": [
         "Fetch {subject} reviews from {data_source_str} in {market} ({time_range})",
         "Tag each review with a feature label (Login, Payment, Onboarding, Performance, Other)",
@@ -88,8 +69,8 @@ INITIAL_PLAN_TEMPLATES = {
     ],
 }
 
-# deep_dive mode: 6 sub-steps drilling into a specific focus topic
-DEEP_DIVE_PREFIX = [
+# Deep-dive: 6 sub-steps drilling into a specific focus topic
+DEEP_DIVE_STEPS = [
     "Filter {subject} review corpus to all mentions of {focus} from {data_source_str}",
     "Re-cluster {focus} complaints into granular sub-themes (e.g. error type, user action, platform)",
     "Rank sub-themes by frequency and severity score",
@@ -99,54 +80,75 @@ DEEP_DIVE_PREFIX = [
 ]
 
 # ---------------------------------------------------------------------------
-# Summary templates (natural-language confirmation message shown to user)
-# ---------------------------------------------------------------------------
-
-SUMMARY_TEMPLATES = {
-    "product": (
-        "I'll fetch {subject} reviews from {data_source_str} in {market} (last {time_range}), "
-        "tag complaints by feature, rank pain points by severity, and map them to roadmap priorities. "
-        "Want to adjust the data sources or proceed?"
-    ),
-    "marketing": (
-        "I'll pull {subject} mentions and reviews from {data_source_str} in {market} (last {time_range}), "
-        "analyse sentiment trends, surface brand themes, and recommend messaging angles. "
-        "Want to adjust the data sources or proceed?"
-    ),
-    "quality": (
-        "I'll scan 1–2 star {subject} reviews from {data_source_str} in {market} (last {time_range}), "
-        "classify defects, flag regressions, and produce a bug-report summary for the dev team. "
-        "Want to adjust the data sources or proceed?"
-    ),
-    "deep_dive": (
-        "I'll drill into the {focus} complaint cluster for {subject} in {market} "
-        "across {data_source_str}, break it into sub-themes, and identify when issues started spiking. "
-        "Shall I proceed?"
-    ),
-}
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _format_steps(steps: list[str], vars_: dict) -> list[str]:
-    """Apply variable substitution to each step string."""
     return [s.format(**vars_) for s in steps]
 
 
 def _describe_filters(filters: dict) -> dict:
-    """Produce human-readable filter descriptions."""
     time_range = filters.get("time_range", "last_90_days").replace("_", " ")
-    platform = filters.get("platform", "all")
-    sentiment = filters.get("sentiment", "all")
-    keywords = filters.get("keywords", [])
+    platform   = filters.get("platform", "all")
+    sentiment  = filters.get("sentiment", "all")
+    keywords   = filters.get("keywords", [])
     return {
         "time_range": time_range,
-        "platform": platform if platform != "all" else "all platforms",
-        "sentiment": sentiment if sentiment != "all" else "all sentiments",
-        "keywords": keywords,
+        "platform":   platform if platform != "all" else "all platforms",
+        "sentiment":  sentiment if sentiment != "all" else "all sentiments",
+        "keywords":   keywords,
     }
+
+
+def _format_source_str(data_source: list[str]) -> str:
+    all_six = {"App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"}
+    if set(data_source) >= all_six:
+        return "all sources (App Store, CH Play, Youtube, Voz, Tinhte, Reddit)"
+    if len(data_source) <= 3:
+        return ", ".join(data_source)
+    return ", ".join(data_source[:3]) + f" + {len(data_source) - 3} more"
+
+
+def _build_confirm_message(
+    subject: str,
+    market: str,
+    target_user: str,
+    goal: str | None,
+    data_source_str: str,
+    time_range: str,
+    lang: str = "en",
+) -> str:
+    """
+    Natural-language plan confirmation shown to user.
+    Includes research goal, team lens, sources, and a friendly prompt to adjust or proceed.
+    """
+    role = ROLE_LABELS.get(target_user, target_user.title())
+    goal_line = goal or ("the research objective" if lang == "en" else "mục tiêu nghiên cứu")
+
+    if lang == "vi":
+        return (
+            f"Đây là kế hoạch của tôi:\n\n"
+            f"🎯 Mục tiêu: {goal_line}\n"
+            f"👤 Góc nhìn: {role}\n"
+            f"📡 Nguồn dữ liệu: {data_source_str}\n"
+            f"📅 Thời gian: {time_range}\n\n"
+            f"Tôi sẽ lấy review {subject} tại {market}, phân tích theo lens {role.split('(')[0].strip()}, "
+            f"và tổng hợp insights phù hợp với mục tiêu trên.\n\n"
+            f"Bạn muốn điều chỉnh gì không — nguồn dữ liệu, khoảng thời gian, hay phạm vi? "
+            f"Hoặc nói \"go\" để tôi bắt đầu."
+        )
+    else:
+        return (
+            f"Here's my plan:\n\n"
+            f"🎯 Research goal: {goal_line}\n"
+            f"👤 Lens: {role}\n"
+            f"📡 Sources: {data_source_str}\n"
+            f"📅 Time range: {time_range}\n\n"
+            f"I'll pull {subject} reviews in {market}, analyse them through the {role.split('(')[0].strip()} lens, "
+            f"and surface insights aligned to your goal.\n\n"
+            f"Anything you'd like to adjust — sources, time range, or scope? "
+            f"Otherwise just say \"go\" and I'll start."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -154,51 +156,50 @@ def _describe_filters(filters: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def build_plan(intent: dict, mode: str = "initial") -> dict:
-    """
-    Returns the intent dict with `plan_steps` and `_plan_summary` populated.
-    """
-    subject = intent.get("subject", "the product")
-    market = intent.get("market", "the market")
-    goal = intent.get("goal", "product")
-    focus = intent.get("focus")
-    filters = intent.get("filters", {})
+    subject     = intent.get("subject", "the product")
+    market      = intent.get("market", "the market")
+    target_user = intent.get("target_user") or "product"
+    goal        = intent.get("goal")
+    focus       = intent.get("focus")
+    filters     = intent.get("filters", {})
     data_source = intent.get("data_source") or ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"]
 
-    filter_desc = _describe_filters(filters)
-
-    # Human-readable source list: ≤3 shown, then "+ N more"
-    if len(data_source) <= 3:
-        data_source_str = ", ".join(data_source)
-    elif len(data_source) == len(["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"]):
-        data_source_str = "all sources (App Store, CH Play, Youtube, Voz, Tinhte, Reddit)"
-    else:
-        data_source_str = ", ".join(data_source[:3]) + f" + {len(data_source) - 3} more"
+    filter_desc     = _describe_filters(filters)
+    data_source_str = _format_source_str(data_source)
 
     vars_ = {
-        "subject": subject,
-        "market": market,
-        "goal": goal,
-        "focus": focus or "the selected topic",
-        "time_range": filter_desc["time_range"],
-        "platform": filter_desc["platform"],
-        "sentiment": filter_desc["sentiment"],
+        "subject":         subject,
+        "market":          market,
+        "target_user":     target_user,
+        "goal":            goal or "user feedback trends",
+        "focus":           focus or "the selected topic",
+        "time_range":      filter_desc["time_range"],
+        "platform":        filter_desc["platform"],
+        "sentiment":       filter_desc["sentiment"],
         "data_source_str": data_source_str,
-        "role_label": ROLE_LABELS.get(goal, ""),
+        "role_label":      ROLE_LABELS.get(target_user, ""),
     }
 
     if mode == "deep_dive" and focus:
-        steps = _format_steps(DEEP_DIVE_PREFIX, vars_)
-        summary = SUMMARY_TEMPLATES["deep_dive"].format(**vars_)
+        steps = _format_steps(DEEP_DIVE_STEPS, vars_)
     else:
-        template = INITIAL_PLAN_TEMPLATES.get(goal, INITIAL_PLAN_TEMPLATES["product"])
+        template = INITIAL_PLAN_TEMPLATES.get(target_user, INITIAL_PLAN_TEMPLATES["product"])
         steps = _format_steps(template, vars_)
-        summary = SUMMARY_TEMPLATES.get(goal, SUMMARY_TEMPLATES["product"]).format(**vars_)
+
+    # Detect language from goal/subject (simple heuristic: Vietnamese diacritics)
+    import re
+    _vi = re.compile(r"[àáâãèéêìíòóôõùúýăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỷỹỵ]", re.I)
+    lang = "vi" if _vi.search((goal or "") + " " + market) else "en"
+
+    summary = _build_confirm_message(
+        subject, market, target_user, goal,
+        data_source_str, filter_desc["time_range"], lang,
+    )
 
     result = dict(intent)
-    result["plan_steps"] = steps
+    result["plan_steps"]    = steps
     result["_plan_summary"] = summary
 
-    # Remove internal meta-fields not meant for downstream skills
     result.pop("missing_required", None)
     result.pop("mode", None)
 
@@ -213,17 +214,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Build an analysis plan from a resolved intent object."
     )
-    parser.add_argument(
-        "--intent",
-        required=True,
-        help="Resolved intent JSON string",
-    )
-    parser.add_argument(
-        "--mode",
-        default="initial",
-        choices=["initial", "deep_dive"],
-        help="Planning mode: 'initial' for full analysis, 'deep_dive' for focused drill-down",
-    )
+    parser.add_argument("--intent", required=True, help="Resolved intent JSON string")
+    parser.add_argument("--mode", default="initial", choices=["initial", "deep_dive"])
     args = parser.parse_args()
 
     try:
@@ -232,8 +224,7 @@ def main():
         print(json.dumps({"error": f"Invalid intent JSON: {e}"}), file=sys.stderr)
         sys.exit(1)
 
-    # Validate required fields
-    missing = [f for f in ["subject", "market", "goal"] if not intent.get(f)]
+    missing = [f for f in ["subject", "market", "target_user"] if not intent.get(f)]
     if missing:
         print(
             json.dumps({"error": f"Cannot build plan — missing required fields: {missing}"}),

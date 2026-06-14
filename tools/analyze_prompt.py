@@ -4,28 +4,18 @@ analyze_prompt.py
 Parses a raw user message and merges the result with the current session context
 to produce an updated intent state.
 
-Fixes applied:
-  - #6: _extract_focus now skips FOCUS_STOP_WORDS (Why, Tell, Show, etc.)
-  - #7: mode=deep_dive only set when ALL required fields are already resolved
-  - #10: _extract_market expanded with broader country list + pattern-first approach
+Fields:
+  - subject      : product/app being analyzed (required)
+  - market       : geographic scope (required)
+  - target_user  : who is analyzing — product | marketing | quality (required)
+  - goal         : free-text research objective, e.g. "pain points in payment feature" (required)
+  - focus        : sub-topic for deep-dive follow-ups (optional)
+  - data_source  : list of sources to pull from (default = all 6)
 
-Usage (CLI):
-    python tools/analyze_prompt.py \
-        --message "Analyze MoMo in Vietnam for product insights" \
-        --context '{"subject":null,"market":null,"goal":null,"focus":null,"filters":{},"clarifications_done":[],"plan_steps":[]}'
-
-Output (stdout, JSON):
-    {
-        "subject": "MoMo",
-        "market": "Vietnam",
-        "goal": "product",
-        "focus": null,
-        "filters": {},
-        "clarifications_done": [],
-        "plan_steps": [],
-        "missing_required": [],
-        "mode": "planning"
-    }
+Fixes:
+  - #6: _extract_focus skips FOCUS_STOP_WORDS
+  - #7: mode=deep_dive only when ALL required fields are resolved
+  - #10: _extract_market with broader country list + word-boundary guard
 """
 
 import argparse
@@ -37,24 +27,27 @@ import sys
 # Constants
 # ---------------------------------------------------------------------------
 
-REQUIRED_FIELDS = ["subject", "market", "goal"]
+REQUIRED_FIELDS = ["subject", "market", "target_user", "goal"]
 
-GOAL_KEYWORDS = {
+# target_user detection (who is doing the analysis)
+TARGET_USER_KEYWORDS = {
     "product": [
-        "product", "feature", "ux", "user experience", "usability",
+        "product owner", "po ", " po,", "ux", "user experience", "usability",
         "flow", "ui", "roadmap", "sản phẩm", "tính năng", "trải nghiệm",
     ],
     "marketing": [
-        "marketing", "brand", "perception", "awareness", "campaign",
+        "marketing", "marketer", "brand", "perception", "awareness", "campaign",
         "acquisition", "retention", "thương hiệu", "quảng cáo", "nhận thức",
+        "mkt", "i am a market",
     ],
     "quality": [
-        "quality", "bug", "crash", "error", "defect", "qe", "test",
-        "performance", "rating", "lỗi", "chất lượng", "kiểm thử", "sự cố",
+        "quality", "bug", "crash", "error", "defect", "qe", " qa ",
+        "test", "performance", "rating", "lỗi", "chất lượng", "kiểm thử",
+        "sự cố", "regression",
     ],
 }
 
-# Supported data sources (shown to user as options)
+# Supported data sources
 ALL_DATA_SOURCES = ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"]
 
 DATA_SOURCE_TOKENS = {
@@ -87,22 +80,21 @@ DEEP_DIVE_PATTERNS = [
     r"\bchi tiết\b",
 ]
 
-# Fix #6: words that look like focus topics but are sentence starters / question words
+# Words that look like focus topics but are question/sentence starters
 FOCUS_STOP_WORDS = {
     "Why", "What", "How", "When", "Where", "Who", "Which",
     "Tell", "Show", "Give", "Let", "Break", "Find", "Get", "Can",
     "Please", "Help", "Make", "Does", "Is", "Are", "Was", "Were",
-    # Vietnamese
     "Phân", "Tại", "Vì", "Hãy", "Cho", "Bạn", "Tôi",
 }
 
 PII_PATTERNS = [
-    r"\b[\w.+-]+@[\w-]+\.\w{2,}\b",          # email
-    r"\b(?:\+84|0)\d{9,10}\b",               # VN phone
-    r"\b\d{9,12}\b",                          # numeric ID
+    r"\b[\w.+-]+@[\w-]+\.\w{2,}\b",    # email
+    r"\b(?:\+84|0)\d{9,10}\b",          # VN phone
+    r"\b\d{9,12}\b",                    # numeric ID
 ]
 
-# Fix #10: expanded market token list
+# Expanded market token list
 MARKET_TOKENS = [
     "vietnam", "việt nam",
     "southeast asia", "sea",
@@ -111,6 +103,27 @@ MARKET_TOKENS = [
     "usa", "united states", "us", "uk", "united kingdom",
     "australia", "europe", "global", "worldwide",
     "hồ chí minh", "hà nội", "hanoi", "ho chi minh",
+]
+
+# Patterns to extract a free-text research goal from a detailed message
+GOAL_EXTRACT_PATTERNS_EN = [
+    # "research/find X of product Y" → captures X (stops before "of product")
+    r"\b(?:research|find|study|look\s+for)\s+(.{10,120}?)\s+(?:of|for|from)\s+(?:product\s+)?[A-Z][a-z]",
+    # "help me research/analyze X" → captures X until "and finally/propose" or end
+    r"\bhelp\s+(?:me\s+)?(?:research|analyze|find|study|understand)\s+(.{10,120}?)(?:\s+and\s+(?:finally|propose|then|also)\b|\s*$)",
+    # "research on X", "study X", "understand X"
+    r"\b(?:research|study|understand|investigate|explore)\s+(?:the\s+)?(.{8,80}?)(?:\s+(?:of|for)\s+(?:product\s+)?[A-Z]|\s*$)",
+    # "about X issues/feedback/complaints"
+    r"\babout\s+(.{6,60}?)\s+(?:issues?|feedback|complaints?|problems?|bugs?|crashes?)",
+    # "X feedback", "X complaints" as standalone phrase
+    r"(?:negative\s+)?(?:feedback|complaints?|issues?|bugs?)\s+(?:about|on|with)\s+(.{5,60}?)(?:\s+in\s+|\s*$)",
+]
+
+GOAL_EXTRACT_PATTERNS_VI = [
+    # "phản hồi về X", "khiếu nại về X"
+    r"(?:phản hồi|khiếu nại|lỗi|vấn đề|nghiên cứu)\s+(?:về\s+)?(.{5,60}?)(?:\s+(?:ở|tại|của|cho)\s+|\s*$)",
+    # "tìm hiểu X"
+    r"(?:tìm hiểu|nghiên cứu|phân tích)\s+(?:về\s+)?(.{5,60}?)(?:\s+(?:ở|tại)\s+|\s*$)",
 ]
 
 # ---------------------------------------------------------------------------
@@ -123,11 +136,37 @@ def _strip_pii(text: str) -> str:
     return text
 
 
-def _detect_goal(text: str) -> str | None:
+def _detect_target_user(text: str) -> str | None:
     text_lower = text.lower()
-    for goal, keywords in GOAL_KEYWORDS.items():
+    for tu, keywords in TARGET_USER_KEYWORDS.items():
         if any(kw in text_lower for kw in keywords):
-            return goal
+            return tu
+    return None
+
+
+def _extract_goal_from_message(text: str) -> str | None:
+    """
+    Tries to extract a free-text research objective from a detailed message.
+    Returns None if the message is too short/generic to infer one.
+    """
+    # Only attempt extraction if message is specific enough (> 6 words)
+    if len(text.split()) < 7:
+        return None
+
+    for pattern in GOAL_EXTRACT_PATTERNS_EN:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            candidate = m.group(1).strip().rstrip(".,")
+            if len(candidate) >= 8:
+                return candidate
+
+    for pattern in GOAL_EXTRACT_PATTERNS_VI:
+        m = re.search(pattern, text)
+        if m:
+            candidate = m.group(1).strip().rstrip(".,")
+            if len(candidate) >= 5:
+                return candidate
+
     return None
 
 
@@ -138,31 +177,22 @@ def _detect_deep_dive(text: str) -> bool:
 
 def _extract_focus(text: str, subject: str | None) -> str | None:
     """
-    Extracts a focus topic from a deep-dive question.
-    E.g. "Why is Login complained about?" → "Login"
-
-    Fix #6: skips FOCUS_STOP_WORDS so "Why", "Tell", etc. are never returned as focus.
-    Uses finditer to try all matches, not just the first one.
+    Fix #6: skips FOCUS_STOP_WORDS. Uses finditer to try all matches.
     """
-    # English pattern: capitalized word(s) optionally followed by feature/flow/etc.
     for match in re.finditer(
         r"\b([A-Z][a-zA-Z0-9]+(?:\s[A-Z][a-zA-Z0-9]+)?)\b"
         r"(?:\s+(?:is|are|flow|feature|group|cluster|issue|complaint|problem|error|bug))?",
         text,
     ):
         candidate = match.group(1)
-        # Skip stop words
         if candidate in FOCUS_STOP_WORDS:
             continue
-        # Skip subject itself
         if subject and candidate.lower() == subject.lower():
             continue
-        # Skip known market names
         if candidate.lower() in MARKET_TOKENS:
             continue
         return candidate
 
-    # Vietnamese pattern: "nhóm Login", "vấn đề Login", "tính năng Login"
     match_vi = re.search(
         r"(?:nhóm|vấn đề|tính năng|màn hình|chức năng)\s+([A-Za-zÀ-ɏ0-9]+)",
         text,
@@ -174,15 +204,16 @@ def _extract_focus(text: str, subject: str | None) -> str | None:
 
 
 def _extract_subject(text: str) -> str | None:
-    """
-    Heuristic: proper noun after 'analyze/phân tích/review', or before 'app/platform'.
-    Also handles standalone product names as the first token when no trigger verb present.
-    """
     patterns = [
-        r"(?:analyze|analyse|phân tích|review|đánh giá|compare)\s+([A-Za-z0-9À-ɏ]+)",
-        r"^([A-Za-z0-9À-ɏ]+)\s+(?:app|platform|product|service|ứng dụng)",
-        # "MoMo in Vietnam" or "MoMo for product" — subject as first token
-        r"^([A-Z][a-zA-Z0-9]+)\s+(?:in|for|ở|tại|cho)",
+        # Highest priority: "of product Zalopay", "product Zalopay" — keyword `product` specifically
+        # Capture single product name only (stop at common conjunctions/prepositions)
+        r"\bproduct\s+([A-Za-z0-9À-ɏ]{2,30})(?:\s+(?:and|or|,|in|for|to|the)\b|$)",
+        # "analyze/review X in/for" — action verb before product name
+        r"(?:analyze|analyse|phân tích|review|đánh giá|compare)\s+([A-Za-z0-9À-ɏ][A-Za-z0-9À-ɏ\s]{0,20}?)(?:\s+(?:in|for|ở|tại|về)|$)",
+        # "Zalopay app" at sentence start
+        r"^([A-Za-z0-9À-ɏ]{2,30})\s+(?:app|platform|service|ứng dụng)",
+        # Single-word proper noun at start before "in/for" (no spaces allowed in capture)
+        r"^([A-Z][a-zA-Z0-9]{2,25})\s+(?:in|for|ở|tại|cho)\s",
     ]
     for p in patterns:
         m = re.search(p, text, flags=re.IGNORECASE)
@@ -192,10 +223,6 @@ def _extract_subject(text: str) -> str | None:
 
 
 def _extract_data_sources(text: str) -> list[str] | None:
-    """
-    Detects explicit data source mentions in the user message.
-    Returns a list of matched sources, or None if none found.
-    """
     text_lower = text.lower()
     found = []
     for token, source in DATA_SOURCE_TOKENS.items():
@@ -204,12 +231,17 @@ def _extract_data_sources(text: str) -> list[str] | None:
     return found if found else None
 
 
+# Industry/category terms that look like markets but are not geographic markets
+MARKET_BLACKLIST = {
+    "product", "marketing", "quality", "the", "me", "us",
+    "fintech", "tech", "technology", "company", "enterprise", "startup",
+    "business", "industry", "sector", "app", "application", "platform",
+    "service", "store", "market", "channel", "you", "we",
+}
+
+
 def _extract_market(text: str) -> str | None:
-    """
-    Fix #10: pattern-first approach, then token list fallback.
-    Handles broader country list and preposition patterns.
-    """
-    # Primary: explicit preposition pattern — "in Vietnam", "tại Việt Nam", "ở Korea"
+    # Primary: explicit preposition pattern
     m = re.search(
         r"(?:\bin\b|\bat\b|tại|ở|cho thị trường)\s+([A-Za-zÀ-ɏ][\w\s]{1,30}?)(?:\s+(?:for|with|to|and|,|$))",
         text,
@@ -217,21 +249,20 @@ def _extract_market(text: str) -> str | None:
     )
     if m:
         candidate = m.group(1).strip().rstrip(",.")
-        # Make sure it's not a goal keyword
-        if candidate.lower() not in ("product", "marketing", "competitive", "the"):
+        if candidate.lower() not in MARKET_BLACKLIST:
             return candidate.title()
 
-    # Simpler preposition fallback (word boundary prevents matching inside "Login")
+    # Simpler fallback with word boundary (fix #10: prevents "Login bad" → market="Bad")
     m2 = re.search(r"\b(?:in|at|tại|ở)\b\s+([A-Za-zÀ-ɏ]{3,})", text, re.IGNORECASE)
     if m2:
         candidate = m2.group(1).strip().title()
-        if candidate.lower() not in ("product", "marketing", "competitive", "the"):
+        if candidate.lower() not in MARKET_BLACKLIST:
             return candidate
 
-    # Token list fallback
+    # Token list fallback (authoritative geographic list — word-boundary safe)
     text_lower = text.lower()
     for token in MARKET_TOKENS:
-        if token in text_lower:
+        if re.search(r"\b" + re.escape(token) + r"\b", text_lower):
             return token.title()
 
     return None
@@ -253,7 +284,8 @@ def parse(message: str, context: dict) -> dict:
     # Extract new information from message
     extracted_subject = _extract_subject(message)
     extracted_market = _extract_market(message)
-    extracted_goal = _detect_goal(message)
+    extracted_target_user = _detect_target_user(message)
+    extracted_goal = _extract_goal_from_message(message)
     extracted_focus = (
         _extract_focus(message, context.get("subject") or extracted_subject)
         if is_deep_dive else None
@@ -266,11 +298,12 @@ def parse(message: str, context: dict) -> dict:
         intent["subject"] = extracted_subject
     if not intent.get("market") and extracted_market:
         intent["market"] = extracted_market
+    if not intent.get("target_user") and extracted_target_user:
+        intent["target_user"] = extracted_target_user
     if not intent.get("goal") and extracted_goal:
         intent["goal"] = extracted_goal
     if extracted_focus:
         intent["focus"] = extracted_focus
-    # data_source: overwrite only if user explicitly named sources
     if extracted_sources:
         intent["data_source"] = extracted_sources
 
@@ -283,7 +316,6 @@ def parse(message: str, context: dict) -> dict:
     else:
         mode = "clarification" if context.get("clarifications_done") else "initial"
 
-    # Identify still-missing required fields
     missing = [f for f in REQUIRED_FIELDS if not intent.get(f)]
 
     intent["missing_required"] = missing
@@ -291,7 +323,9 @@ def parse(message: str, context: dict) -> dict:
 
     # Ensure keys exist
     intent.setdefault("focus", None)
-    intent.setdefault("data_source", list(ALL_DATA_SOURCES))  # default = all sources
+    intent.setdefault("target_user", None)
+    intent.setdefault("goal", None)
+    intent.setdefault("data_source", list(ALL_DATA_SOURCES))
     intent.setdefault("filters", {})
     intent.setdefault("clarifications_done", [])
     intent.setdefault("plan_steps", [])
@@ -306,11 +340,7 @@ def parse(message: str, context: dict) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Parse a VoC user prompt into intent fields.")
     parser.add_argument("--message", required=True, help="Raw user message")
-    parser.add_argument(
-        "--context",
-        default="{}",
-        help="Current session context as JSON string",
-    )
+    parser.add_argument("--context", default="{}", help="Current session context as JSON string")
     args = parser.parse_args()
 
     try:

@@ -101,9 +101,10 @@ def _empty_intent() -> dict:
     return {
         "subject": None,
         "market": None,
-        "goal": None,
-        "focus": None,
-        "data_source": list(ALL_DATA_SOURCES),  # default = all 6 sources
+        "target_user": None,   # product | marketing | quality (who is analyzing)
+        "goal": None,          # free-text research objective
+        "focus": None,         # sub-topic for deep-dive (optional)
+        "data_source": list(ALL_DATA_SOURCES),
         "filters": {
             "time_range": "last_90_days",
             "platform": "all",
@@ -127,6 +128,7 @@ def _empty_session(session_id: str) -> dict:
         "clarification_attempts": {
             "subject": 0,
             "market": 0,
+            "target_user": 0,
             "goal": 0,
             "focus": 0,
         },

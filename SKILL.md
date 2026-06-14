@@ -10,7 +10,66 @@ This skill powers the **reasoning front-end** of the Voice of Customer agent. It
 When the intent is fully resolved and confirmed, the skill emits a **flat intent JSON** (see `references/output-schema.md`) consumed by `/voc-datasource` and `/voc-report`.
 
 > **Scope boundary**: This skill does NOT fetch data, generate analysis results, or render reports.
-> Its sole outputs are: clarifying questions (via `ask_for_parameters`), a plan summary, and an intent JSON.
+> Its sole outputs are JSON objects formatted via `tools/response_formatter.py`.
+
+---
+
+## (**CRITICAL**) JSON-Only Output Rule
+
+**This skill NEVER outputs plain text.** Every agent turn must end with exactly one call to `tools/response_formatter.py` and output its JSON result verbatim. No prose, no markdown, no explanation alongside the JSON.
+
+### FE API Contract — 4 output shapes
+
+| Stage | When | Shape |
+|---|---|---|
+| **1. Query echo** | Immediately on any user input | `{"query": "..."}` |
+| **2. Clarifying questions** | One or more required fields missing | `{"query": "...", "suggestedQuestions": [...]}` |
+| **3. Plan confirmation** | All fields resolved, awaiting user confirm | `{"query": "...", "focusArea": "..."}` |
+| **4. Execution plan** | After user confirms | `{"query": "...", "subject": ..., "plan_steps": [...], ...}` |
+
+#### Shape 2 — suggestedQuestions
+```json
+{
+  "query": "Analyze TikTok Shop",
+  "suggestedQuestions": [
+    {
+      "id": "q_market",
+      "question": "Which market should I analyze TikTok Shop in?",
+      "choices": ["Vietnam", "Indonesia", "UK", "USA", "...", "Suggest another market...", "Other (type your own)..."]
+    },
+    {
+      "id": "q_target_user",
+      "question": "What is the goal of this TikTok Shop analysis?",
+      "choices": ["Product", "Marketing", "Quality", "Suggest another goal type...", "Other (type your own)..."]
+    }
+  ]
+}
+```
+`choices` **always** ends with `"Suggest another {field}..."` + `"Other (type your own)..."`.
+
+#### Shape 3 — focusArea
+```json
+{
+  "query": "looks good",
+  "focusArea": "Target Product: TikTok Shop. Research goal: crash in payment. Lens: Quality Engineering (QE). Market: UK. Customized parameters: Date Range: last 90 days, Sources: App Store, CH Play."
+}
+```
+
+#### Shape 4 — Execution plan (flat intent JSON + query)
+```json
+{
+  "query": "go",
+  "subject": "TikTok Shop",
+  "market": "UK",
+  "target_user": "quality",
+  "goal": "crash in payment",
+  "focus": null,
+  "data_source": ["App Store", "CH Play"],
+  "filters": {"time_range": "last_90_days", ...},
+  "clarifications_done": [...],
+  "plan_steps": [...]
+}
+```
 
 ---
 
@@ -32,7 +91,8 @@ When the intent is fully resolved and confirmed, the skill emits a **flat intent
 
 - [ ] `subject` — non-null, resolved via parse or `ask_for_parameters`
 - [ ] `market` — non-null, geographic or demographic scope
-- [ ] `goal` — exactly one of `product` | `marketing` | `competitive`
+- [ ] `target_user` — exactly one of `product` | `marketing` | `quality`
+- [ ] `goal` — non-null free-text research objective
 - [ ] User responded with an explicit confirmation keyword (see Confirmation Keywords)
 - [ ] PII stripped from all fields via `context_manager.strip_pii`
 
@@ -46,27 +106,31 @@ Skipping any item is not permitted regardless of how confident the agent is abou
 
 ### Mode 1
 
-1. **Classify mode** — confirm this is a new analysis request (not a follow-up). If unclear, treat as Mode 1. *[internal — do not say this to the user]*
-2. **Parse intent** — run `tools/analyze_prompt.py` with the user message and current context. *[internal]*
-3. **Check missing required fields** (`subject`, `market`, `goal`). For each null field:
-   - Call `tools/ask_for_parameters.py request` with `--field`, `--reason`, `--question`.
-   - **STOP. Output ONLY the question string to the user. Nothing else.**
-   - Wait for user reply. Then call `tools/ask_for_parameters.py respond` to record the value.
-   - Repeat until all required fields are resolved.
-4. **Verify Pre-Output Gate checklist** — all 5 items checked. *[internal — do not show checklist to user]*
-5. **Build plan** — run `tools/conversation_planner.py --mode initial`. *[internal]*
-6. **Present plan summary** to user in plain conversational text. Include which data sources will be used and invite the user to adjust sources or confirm with a single sentence.
-7. **Strip PII** — run `context_manager.strip_pii`. *[internal]*
-8. **Emit intent JSON** — output the JSON object and pass to `/voc-datasource`.
+1. **Classify mode** — confirm new analysis (not follow-up). *[internal]*
+2. **Echo query** — call `tools/response_formatter.py query --message "<user input>"`. Output the result verbatim.
+3. **Parse intent** — run `tools/analyze_prompt.py`. *[internal]*
+4. **Check missing required fields** (`subject`, `market`, `target_user`, `goal`). If any null:
+   - Call `tools/clarification_engine.py --batch` to get all missing questions at once.
+   - Call `tools/response_formatter.py questions --message "..." --questions '[...]'`.
+   - **STOP. Output the `suggestedQuestions` JSON verbatim. Nothing else.**
+   - For each user answer, call `tools/ask_for_parameters.py respond` to record the value.
+   - Re-run `analyze_prompt.py` and repeat until all fields resolved.
+5. **Verify Pre-Output Gate** — all items checked. *[internal]*
+6. **Build plan** — run `tools/conversation_planner.py --mode initial`. *[internal]*
+7. **Present confirmation** — call `tools/response_formatter.py focus_area --message "..." --intent '...'`. Output verbatim.
+8. **Wait for user confirm** — accepted keywords: yes / go / confirm / ok / đồng ý / tiến hành / ...
+9. **Strip PII** — run `context_manager.strip_pii`. *[internal]*
+10. **Emit execution plan** — call `tools/response_formatter.py plan --message "<confirm word>" --intent '...'`. Output verbatim → pass to `/voc-datasource`.
 
 ### Mode 2
 
 1. **Classify mode** — follow-up on an already-confirmed analysis. *[internal]*
-2. **Extract focus** — run `tools/analyze_prompt.py`. *[internal]*
-3. **Do NOT re-ask** `subject`, `market`, or `goal`.
-4. Only call `ask_for_parameters` if the focus topic is genuinely ambiguous.
-5. **Build deep-dive plan** — run `tools/conversation_planner.py --mode deep_dive`. *[internal]*
-6. **Emit updated intent JSON** with `focus` set.
+2. **Echo query** — `response_formatter.py query`. Output verbatim.
+3. **Extract focus** — run `tools/analyze_prompt.py`. *[internal]*
+4. **Do NOT re-ask** `subject`, `market`, `target_user`, or `goal`.
+5. If focus is ambiguous, call `clarification_engine.py --batch` → `response_formatter.py questions`.
+6. **Build deep-dive plan** — run `tools/conversation_planner.py --mode deep_dive`. *[internal]*
+7. **Emit updated plan** — `response_formatter.py plan --message "..." --intent '...'`. Output verbatim.
 
 ---
 
@@ -94,7 +158,8 @@ tools/ask_for_parameters.py respond
 - One call per missing field. Never bundle two fields in one call.
 - If `status = max_retries_reached`, use a sensible default and proceed without asking again.
 - If `status = invalid_value`, call `request` again for that field.
-- `goal` valid values: `product`, `marketing`, `quality`.
+- `target_user` valid values: `product`, `marketing`, `quality`.
+- `goal` valid values: any non-empty free-text string (no validation).
 - `data_source` valid values: `App Store`, `CH Play`, `Youtube`, `Voz`, `Tinhte`, `Reddit`, `All`.
 
 ---
@@ -105,7 +170,8 @@ tools/ask_for_parameters.py respond
 |---|---|
 | **Subject** | Product, app, brand, or feature being analyzed (e.g., "MoMo", "Login flow"). Required. |
 | **Market** | Geographic or demographic scope (e.g., "Vietnam", "Southeast Asia"). Required. |
-| **Goal** | `product` (feature/UX — PO lens) \| `marketing` (brand/perception — MKT lens) \| `quality` (bugs/ratings — QE lens). Required. |
+| **Target User** | Who is running the analysis: `product` (PO lens) \| `marketing` (MKT lens) \| `quality` (QE lens). Required. |
+| **Goal** | Free-text research objective, e.g. "pain points in payment flow", "features users want most". Required. |
 | **Data Source** | Which platforms to pull reviews from. Default = all: `App Store`, `CH Play`, `Youtube`, `Voz`, `Tinhte`, `Reddit`. Updatable during plan confirmation. |
 | **Focus** | Sub-scope for deep dives (e.g., "Login", "Payment timeout"). Optional, set in Mode 2. |
 | **Filters** | Optional: time range, platform, sentiment, keywords. Defaults applied if not specified. |
@@ -121,7 +187,8 @@ tools/ask_for_parameters.py respond
 |---|---|---|
 | `subject` | ✅ | — must ask |
 | `market` | ✅ | — must ask |
-| `goal` | ✅ | — must ask |
+| `target_user` | ✅ | — must ask |
+| `goal` | ✅ | — must ask (free-text) |
 | `data_source` | ❌ | all 6 sources |
 | `focus` | ❌ | `null` |
 | `filters.time_range` | ❌ | `last_90_days` |
@@ -171,26 +238,14 @@ Detect language from the user's message. Respond in the same language. Skill int
 
 ## Response Format
 
-The agent's user-facing responses must be minimal and conversational. Internal reasoning is never shown.
-
-### When asking a clarifying question
-Output ONLY the question. No preamble, no field labels, no numbering, no markdown formatting.
+**All responses are JSON only.** Never output plain text. Always call `response_formatter.py` and output its result verbatim.
 
 | ❌ INCORRECT | ✅ CORRECT |
 |---|---|
-| `Bước 1: Phân tích ý định. subject: ZaloPay (Đã xác định). market: Chưa có. Câu hỏi 1: Bạn muốn phân tích ở thị trường nào?` | `Bạn muốn phân tích ZaloPay ở thị trường nào?` |
-| `I will now perform Mode 1. Missing fields: market, goal. Question: Which market?` | `Which market should I analyze ZaloPay in?` |
-| `**Câu hỏi:** Mục tiêu phân tích là gì?` | `Mục tiêu phân tích MoMo này là gì? [Product] [Marketing] [Quality]` |
-
-### When presenting the plan summary
-One short paragraph in plain text. End with a single confirmation question.
-
-| ❌ INCORRECT | ✅ CORRECT |
-|---|---|
-| Bulleted list of all 6 steps with headers and bold labels | `Tôi sẽ fetch review ZaloPay từ App Store, CH Play, Voz (tất cả nguồn) tại Việt Nam, tag theo tính năng, xếp hạng pain point theo độ nghiêm trọng, và gợi ý action items cho roadmap. Bạn muốn điều chỉnh nguồn dữ liệu không, hay tiến hành luôn?` |
-
-### When emitting intent JSON
-Output the raw JSON block only. No explanation needed.
+| `Bước 1: ... Câu hỏi 1: ...` (plain text) | `{"query":"phân tích ZaloPay","suggestedQuestions":[...]}` |
+| `I will now ask about the market. Which market?` | `{"query":"Analyze ZaloPay","suggestedQuestions":[{"id":"q_market","question":"...","choices":[...]}]}` |
+| Bulleted plan summary in prose | `{"query":"ok","focusArea":"Target Product: ZaloPay. Research goal: ..."}` |
+| Raw intent JSON without query field | `{"query":"go","subject":"ZaloPay","market":"Vietnam",...}` |
 
 ---
 
@@ -202,8 +257,13 @@ User:   Analyze MoMo
 Agent:  → ask_for_parameters(field=market, question="Which market should I analyze MoMo in?")
 User:   Vietnam
 Agent:  → ask_for_parameters.respond(field=market, value="Vietnam")
-        → ask_for_parameters(field=goal, question="What is the goal of this MoMo analysis?",
+        → ask_for_parameters(field=target_user, question="What is the goal of this MoMo analysis?",
                              options=["Product","Marketing","Quality"])
+User:   Quality
+Agent:  → ask_for_parameters.respond(field=target_user, value="quality")
+        → ask_for_parameters(field=goal, question="What specifically would you like to find out about MoMo?
+                             (e.g. 'most reported crashes', 'performance issues on Android')")
+User:   crash patterns in payment flow
 User:   Product
 Agent:  → ask_for_parameters.respond(field=goal, value="product")
         → verify Pre-Output Gate ✅
