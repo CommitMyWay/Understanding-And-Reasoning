@@ -4,25 +4,28 @@ clarification_engine.py
 Generates exactly ONE clarifying question based on the highest-priority
 missing required field in the current intent.
 
+Fix #8: respects max_retries_per_field — returns None when cap is reached.
+Fix #11: goal question now includes 'competitive' as a third option.
+
 Priority order (see references/clarification-rules.md):
     1. subject   — can't analyze anything without knowing what to analyze
     2. market    — scope needed before data fetch
     3. goal      — determines which analysis lens to apply
 
 Language detection:
-    Detects Vietnamese vs. English from conversation history and returns
-    the question in the appropriate language.
+    Detects Vietnamese vs. English from conversation history.
 
 Usage (CLI):
     python tools/clarification_engine.py \
         --missing '["market","goal"]' \
         --history '[{"role":"user","message":"Analyze MoMo"}]' \
-        --subject "MoMo"
+        --subject "MoMo" \
+        --attempts '{"market":0,"goal":0}'
 
 Output (stdout, JSON):
     {
         "field": "market",
-        "question": "Which market would you like to analyze?",
+        "question": "Which market should I analyze MoMo in?",
         "language": "en"
     }
 """
@@ -37,6 +40,7 @@ import sys
 # ---------------------------------------------------------------------------
 
 FIELD_PRIORITY = ["subject", "market", "goal"]
+MAX_RETRIES_PER_FIELD = 2  # Fix #8
 
 # ---------------------------------------------------------------------------
 # Question templates
@@ -51,21 +55,38 @@ QUESTIONS = {
         "en": "Which market would you like to focus on? (e.g., Vietnam, Southeast Asia)",
         "vi": "Bạn muốn phân tích thị trường nào? (ví dụ: Việt Nam, Đông Nam Á)",
     },
+    # Fix #11: added 'competitive' as third option
     "goal": {
-        "en": "Is the goal of this analysis for **Product** insights or **Marketing** insights?",
-        "vi": "Mục tiêu phân tích này là cho **Product** hay **Marketing**?",
+        "en": "Is this analysis for **Product** insights, **Marketing** insights, or **Competitive** benchmarking?",
+        "vi": "Phân tích này dành cho **Product**, **Marketing**, hay **Competitive** (so sánh đối thủ)?",
     },
 }
 
-# Contextual overrides when subject is already known
 QUESTIONS_WITH_SUBJECT = {
     "market": {
         "en": "Which market should I analyze {subject} in?",
         "vi": "Tôi nên phân tích {subject} ở thị trường nào?",
     },
+    # Fix #11: competitive included
     "goal": {
-        "en": "Is this analysis of {subject} for Product insights or Marketing insights?",
-        "vi": "Phân tích {subject} này dành cho Product hay Marketing?",
+        "en": "Is this analysis of {subject} for Product insights, Marketing insights, or Competitive benchmarking?",
+        "vi": "Phân tích {subject} này dành cho Product, Marketing, hay Competitive (so sánh đối thủ)?",
+    },
+}
+
+# Retry prompts when first answer was ambiguous
+RETRY_QUESTIONS = {
+    "goal": {
+        "en": "Please choose one: **product** (feature/UX issues), **marketing** (brand perception), or **competitive** (vs. competitors).",
+        "vi": "Vui lòng chọn một: **product** (vấn đề tính năng/UX), **marketing** (nhận thức thương hiệu), hoặc **competitive** (so sánh đối thủ).",
+    },
+    "market": {
+        "en": "Please specify a market or region (e.g., Vietnam, Southeast Asia, Global).",
+        "vi": "Vui lòng chỉ định thị trường hoặc khu vực (ví dụ: Việt Nam, Đông Nam Á, Toàn cầu).",
+    },
+    "subject": {
+        "en": "Please provide the product or app name you want to analyze.",
+        "vi": "Vui lòng cung cấp tên sản phẩm hoặc ứng dụng bạn muốn phân tích.",
     },
 }
 
@@ -94,10 +115,6 @@ _VI_PATTERN = re.compile(
 
 
 def detect_language(history: list[dict]) -> str:
-    """
-    Returns 'vi' if any user message in history contains Vietnamese diacritics,
-    otherwise returns 'en'.
-    """
     for turn in reversed(history):
         if turn.get("role") == "user":
             if _VI_PATTERN.search(turn.get("message", "")):
@@ -113,47 +130,53 @@ def get_clarification_question(
     missing: list[str],
     history: list[dict],
     subject: str | None = None,
-) -> dict:
+    attempts: dict | None = None,
+) -> dict | None:
     """
-    Returns a dict with:
-        field    — the field being asked about
-        question — the question string in the detected language
-        language — 'en' or 'vi'
-    Returns None if there are no missing required fields.
+    Returns a dict with field / question / language, or None if nothing to ask.
+
+    Fix #8: if attempts[field] >= MAX_RETRIES_PER_FIELD, skip that field.
+    Uses retry question template on second attempt.
     """
     if not missing:
         return None
 
-    # Sort by priority
-    prioritized = [f for f in FIELD_PRIORITY if f in missing]
-    if not prioritized:
-        return None
-
-    field = prioritized[0]
+    attempts = attempts or {}
     lang = detect_language(history)
 
-    # Use contextual template if subject is known and template exists
-    if subject and field in QUESTIONS_WITH_SUBJECT:
-        template = QUESTIONS_WITH_SUBJECT[field][lang]
-        question = template.format(subject=subject)
-    else:
-        question = QUESTIONS[field][lang]
+    for field in FIELD_PRIORITY:
+        if field not in missing:
+            continue
 
-    return {
-        "field": field,
-        "question": question,
-        "language": lang,
-    }
+        field_attempts = attempts.get(field, 0)
+
+        # Fix #8: cap reached — caller should use default, not ask again
+        if field_attempts >= MAX_RETRIES_PER_FIELD:
+            continue
+
+        # Choose question template
+        if field_attempts > 0 and field in RETRY_QUESTIONS:
+            # Second attempt: use stricter retry prompt
+            question = RETRY_QUESTIONS[field][lang]
+        elif subject and field in QUESTIONS_WITH_SUBJECT:
+            question = QUESTIONS_WITH_SUBJECT[field][lang].format(subject=subject)
+        else:
+            question = QUESTIONS[field][lang]
+
+        return {
+            "field": field,
+            "question": question,
+            "language": lang,
+            "attempt_number": field_attempts + 1,
+        }
+
+    # All missing fields have hit max retries
+    return None
 
 
 def is_confirmation(message: str, language: str = "en") -> bool:
-    """
-    Returns True if `message` is a confirmation keyword.
-    Checks both languages to be safe.
-    """
     msg = message.strip().lower()
-    all_keywords = CONFIRMATION_KEYWORDS_EN | CONFIRMATION_KEYWORDS_VI
-    return msg in all_keywords
+    return msg in (CONFIRMATION_KEYWORDS_EN | CONFIRMATION_KEYWORDS_VI)
 
 
 # ---------------------------------------------------------------------------
@@ -164,31 +187,25 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate a single clarifying question for the highest-priority missing field."
     )
+    parser.add_argument("--missing", required=True, help='JSON array, e.g. \'["market","goal"]\'')
+    parser.add_argument("--history", default="[]", help="Conversation history JSON array")
+    parser.add_argument("--subject", default=None)
     parser.add_argument(
-        "--missing",
-        required=True,
-        help='JSON array of missing field names, e.g. \'["market","goal"]\'',
-    )
-    parser.add_argument(
-        "--history",
-        default="[]",
-        help="Conversation history JSON array",
-    )
-    parser.add_argument(
-        "--subject",
-        default=None,
-        help="Already-resolved subject (for contextual question templates)",
+        "--attempts",
+        default="{}",
+        help='JSON object of attempt counts per field, e.g. \'{"market":1,"goal":0}\'',
     )
     args = parser.parse_args()
 
     try:
         missing = json.loads(args.missing)
         history = json.loads(args.history)
+        attempts = json.loads(args.attempts)
     except json.JSONDecodeError as e:
         print(json.dumps({"error": f"Invalid JSON: {e}"}), file=sys.stderr)
         sys.exit(1)
 
-    result = get_clarification_question(missing, history, subject=args.subject)
+    result = get_clarification_question(missing, history, subject=args.subject, attempts=attempts)
 
     if result is None:
         print(json.dumps({"field": None, "question": None, "language": "en"}))

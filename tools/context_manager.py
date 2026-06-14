@@ -1,56 +1,71 @@
 """
 context_manager.py
 ------------------
-In-memory session context store for the VoC Task Understanding skill.
+Session context store for the VoC Task Understanding skill.
 
-All state lives in a module-level dict keyed by session_id.
-State is NOT persisted to disk — it resets when the process exits.
+Fix #8: tracks clarification_attempts per field; caps at MAX_RETRIES_PER_FIELD.
+Fix #9: file-based persistence via JSON temp file so CLI shell-out calls
+        share state across process boundaries.
 
 Usage (CLI):
-    # Initialize a new session
     python tools/context_manager.py init --session my-session-id
-
-    # Save context
-    python tools/context_manager.py save \
-        --session my-session-id \
-        --context '{"subject":"MoMo","market":"Vietnam",...}'
-
-    # Get context
+    python tools/context_manager.py save --session my-session-id --context '{...}'
     python tools/context_manager.py get --session my-session-id
-
-    # Append a turn to conversation history
-    python tools/context_manager.py append_turn \
-        --session my-session-id \
-        --role user \
-        --message "Analyze MoMo"
-
-    # Strip PII from all string fields in context
-    python tools/context_manager.py strip_pii \
-        --session my-session-id
-
-    # Get the final intent JSON (strips internal meta-fields)
-    python tools/context_manager.py get_intent_json \
-        --session my-session-id
-
-    # Reset session
+    python tools/context_manager.py append_turn --session my-session-id --role user --message "..."
+    python tools/context_manager.py strip_pii --session my-session-id
+    python tools/context_manager.py get_intent_json --session my-session-id
     python tools/context_manager.py reset --session my-session-id
 """
 
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
-# In-memory store (module-level singleton)
+# Config
+# ---------------------------------------------------------------------------
+
+MAX_RETRIES_PER_FIELD = 2  # Fix #8: cap clarification attempts per required field
+
+# ---------------------------------------------------------------------------
+# File-based persistence (Fix #9)
+# ---------------------------------------------------------------------------
+
+def _session_file(session_id: str) -> str:
+    """Return path to the JSON file backing this session."""
+    tmp = tempfile.gettempdir()
+    return os.path.join(tmp, f"voc_ctx_{session_id}.json")
+
+
+def _load_from_disk(session_id: str) -> dict | None:
+    path = _session_file(session_id)
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+    return None
+
+
+def _save_to_disk(session: dict):
+    path = _session_file(session["session_id"])
+    with open(path, "w") as f:
+        json.dump(session, f, ensure_ascii=False, indent=2)
+
+# ---------------------------------------------------------------------------
+# In-memory cache (avoids disk reads on every call in same process)
 # ---------------------------------------------------------------------------
 
 _SESSIONS: dict[str, dict] = {}
 
 # ---------------------------------------------------------------------------
-# PII patterns (shared with analyze_prompt.py)
+# PII patterns
 # ---------------------------------------------------------------------------
 
 _PII_PATTERNS = [
@@ -74,7 +89,6 @@ def _strip_pii_recursive(obj):
     if isinstance(obj, list):
         return [_strip_pii_recursive(i) for i in obj]
     return obj
-
 
 # ---------------------------------------------------------------------------
 # Intent skeleton
@@ -103,34 +117,42 @@ def _empty_session(session_id: str) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "intent": _empty_intent(),
-        "history": [],          # list of {role, message, timestamp}
-        "state": "collecting",  # collecting | planning | confirmed | deep_dive
+        "history": [],
+        "state": "collecting",
+        # Fix #8: track attempts per field
+        "clarification_attempts": {
+            "subject": 0,
+            "market": 0,
+            "goal": 0,
+            "focus": 0,
+        },
     }
-
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def init_session(session_id: str) -> dict:
-    """Create a fresh session and return it."""
     session = _empty_session(session_id)
     _SESSIONS[session_id] = session
+    _save_to_disk(session)
     return deepcopy(session)
 
 
 def get_session(session_id: str) -> dict:
-    """Return the current session, creating one if it doesn't exist."""
-    if session_id not in _SESSIONS:
-        return init_session(session_id)
-    return deepcopy(_SESSIONS[session_id])
+    """Return the current session from memory or disk, creating if absent."""
+    if session_id in _SESSIONS:
+        return deepcopy(_SESSIONS[session_id])
+    # Fix #9: try loading from disk (cross-process persistence)
+    on_disk = _load_from_disk(session_id)
+    if on_disk:
+        _SESSIONS[session_id] = on_disk
+        return deepcopy(on_disk)
+    return init_session(session_id)
 
 
 def save_context(session_id: str, intent_update: dict) -> dict:
-    """
-    Merge `intent_update` into the session's intent fields.
-    Internal meta-fields (missing_required, mode) are NOT stored.
-    """
+    """Merge intent_update into the session's intent. Internal meta-fields stripped."""
     session = get_session(session_id)
     internal_keys = {"missing_required", "mode"}
 
@@ -139,20 +161,19 @@ def save_context(session_id: str, intent_update: dict) -> dict:
             continue
         if key in session["intent"]:
             session["intent"][key] = value
-        # Also update top-level state hints
-        if key == "mode":
-            if value == "planning":
-                session["state"] = "planning"
-            elif value == "deep_dive":
-                session["state"] = "deep_dive"
+
+    if intent_update.get("mode") == "planning":
+        session["state"] = "planning"
+    elif intent_update.get("mode") == "deep_dive":
+        session["state"] = "deep_dive"
 
     session["updated_at"] = datetime.now(timezone.utc).isoformat()
     _SESSIONS[session_id] = session
+    _save_to_disk(session)
     return deepcopy(session)
 
 
 def append_turn(session_id: str, role: str, message: str) -> dict:
-    """Add a conversation turn (user or agent) to the history."""
     if role not in ("user", "agent"):
         raise ValueError(f"Invalid role: {role}. Must be 'user' or 'agent'.")
     session = get_session(session_id)
@@ -163,57 +184,88 @@ def append_turn(session_id: str, role: str, message: str) -> dict:
     })
     session["updated_at"] = datetime.now(timezone.utc).isoformat()
     _SESSIONS[session_id] = session
+    _save_to_disk(session)
     return deepcopy(session)
 
 
+def increment_clarification_attempt(session_id: str, field: str) -> dict:
+    """
+    Fix #8: increment attempt counter for a field.
+    Returns the updated session including whether max retries is reached.
+    """
+    session = get_session(session_id)
+    attempts = session.get("clarification_attempts", {})
+    attempts[field] = attempts.get(field, 0) + 1
+    session["clarification_attempts"] = attempts
+    session["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _SESSIONS[session_id] = session
+    _save_to_disk(session)
+    result = deepcopy(session)
+    result["max_retries_reached"] = attempts[field] >= MAX_RETRIES_PER_FIELD
+    result["attempts_for_field"] = attempts[field]
+    return result
+
+
+def get_clarification_attempts(session_id: str, field: str) -> int:
+    """Return how many times this field has been clarified."""
+    session = get_session(session_id)
+    return session.get("clarification_attempts", {}).get(field, 0)
+
+
 def mark_confirmed(session_id: str) -> dict:
-    """Mark the session as confirmed — ready to emit intent JSON."""
     session = get_session(session_id)
     session["state"] = "confirmed"
     session["updated_at"] = datetime.now(timezone.utc).isoformat()
     _SESSIONS[session_id] = session
+    _save_to_disk(session)
     return deepcopy(session)
 
 
 def strip_pii(session_id: str) -> dict:
-    """Run PII stripping over all string fields in intent and history."""
     session = get_session(session_id)
     session["intent"] = _strip_pii_recursive(session["intent"])
     session["history"] = _strip_pii_recursive(session["history"])
     session["updated_at"] = datetime.now(timezone.utc).isoformat()
     _SESSIONS[session_id] = session
+    _save_to_disk(session)
     return deepcopy(session)
 
 
 def get_intent_json(session_id: str) -> dict:
-    """
-    Return the clean intent object — safe to pass to downstream skills.
-    Strips PII first. Does not include history or internal session metadata.
-    """
+    """Clean intent object safe to pass downstream. Strips PII first."""
     strip_pii(session_id)
     session = _SESSIONS[session_id]
     return deepcopy(session["intent"])
 
 
 def reset_session(session_id: str) -> dict:
-    """Wipe and reinitialise the session."""
+    """Wipe in-memory and on-disk state for the session."""
+    path = _session_file(session_id)
+    if os.path.exists(path):
+        os.remove(path)
+    if session_id in _SESSIONS:
+        del _SESSIONS[session_id]
     return init_session(session_id)
-
 
 # ---------------------------------------------------------------------------
 # CLI entrypoint
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="VoC in-memory context manager.")
+    parser = argparse.ArgumentParser(description="VoC session context manager.")
     parser.add_argument(
         "command",
-        choices=["init", "get", "save", "append_turn", "strip_pii", "get_intent_json", "reset"],
+        choices=[
+            "init", "get", "save", "append_turn",
+            "strip_pii", "get_intent_json", "reset",
+            "increment_attempt", "get_attempts",
+        ],
     )
-    parser.add_argument("--session", required=True, help="Session ID")
-    parser.add_argument("--context", default=None, help="Intent JSON string (for 'save')")
-    parser.add_argument("--role", default=None, help="'user' or 'agent' (for 'append_turn')")
-    parser.add_argument("--message", default=None, help="Message text (for 'append_turn')")
+    parser.add_argument("--session", required=True)
+    parser.add_argument("--context", default=None)
+    parser.add_argument("--role", default=None)
+    parser.add_argument("--message", default=None)
+    parser.add_argument("--field", default=None)
     args = parser.parse_args()
 
     try:
@@ -223,10 +275,9 @@ def main():
             result = get_session(args.session)
         elif args.command == "save":
             if not args.context:
-                print(json.dumps({"error": "--context required for save"}), file=sys.stderr)
+                print(json.dumps({"error": "--context required"}), file=sys.stderr)
                 sys.exit(1)
-            intent_update = json.loads(args.context)
-            result = save_context(args.session, intent_update)
+            result = save_context(args.session, json.loads(args.context))
         elif args.command == "append_turn":
             if not args.role or not args.message:
                 print(json.dumps({"error": "--role and --message required"}), file=sys.stderr)
@@ -238,16 +289,23 @@ def main():
             result = get_intent_json(args.session)
         elif args.command == "reset":
             result = reset_session(args.session)
+        elif args.command == "increment_attempt":
+            if not args.field:
+                print(json.dumps({"error": "--field required"}), file=sys.stderr)
+                sys.exit(1)
+            result = increment_clarification_attempt(args.session, args.field)
+        elif args.command == "get_attempts":
+            if not args.field:
+                print(json.dumps({"error": "--field required"}), file=sys.stderr)
+                sys.exit(1)
+            result = {"field": args.field, "attempts": get_clarification_attempts(args.session, args.field)}
         else:
             print(json.dumps({"error": f"Unknown command: {args.command}"}), file=sys.stderr)
             sys.exit(1)
 
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"Invalid JSON: {e}"}), file=sys.stderr)
-        sys.exit(1)
-    except ValueError as e:
+    except (json.JSONDecodeError, ValueError) as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         sys.exit(1)
 
