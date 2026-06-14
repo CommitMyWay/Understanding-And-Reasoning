@@ -42,28 +42,30 @@ Skipping any item is not permitted regardless of how confident the agent is abou
 
 ## Mandatory Process — Must follow in order
 
+> **SILENT EXECUTION RULE**: All steps below are internal reasoning steps. Do NOT narrate them, label them, or show their status to the user. Do NOT output "Mode 1", "Bước 1", field checklists, or internal state. The only things the agent surfaces to the user are: a clarifying question, a plan summary, or the final intent JSON.
+
 ### Mode 1
 
-1. **Classify mode** — confirm this is a new analysis request (not a follow-up). If unclear, treat as Mode 1.
-2. **Parse intent** — run `tools/analyze_prompt.py` with the user message and current context.
+1. **Classify mode** — confirm this is a new analysis request (not a follow-up). If unclear, treat as Mode 1. *[internal — do not say this to the user]*
+2. **Parse intent** — run `tools/analyze_prompt.py` with the user message and current context. *[internal]*
 3. **Check missing required fields** (`subject`, `market`, `goal`). For each null field:
    - Call `tools/ask_for_parameters.py request` with `--field`, `--reason`, `--question`.
-   - **STOP. Do not proceed to the next step.** Wait for user reply.
-   - On user reply, call `tools/ask_for_parameters.py respond` to record the value.
+   - **STOP. Output ONLY the question string to the user. Nothing else.**
+   - Wait for user reply. Then call `tools/ask_for_parameters.py respond` to record the value.
    - Repeat until all required fields are resolved.
-4. **Verify Pre-Output Gate checklist** — all 5 items must be checked before continuing.
-5. **Build plan** — run `tools/conversation_planner.py --mode initial`.
-6. **Present plan summary** to user and ask for confirmation. Wait for explicit confirmation keyword.
-7. **Strip PII** — run `context_manager.strip_pii`.
+4. **Verify Pre-Output Gate checklist** — all 5 items checked. *[internal — do not show checklist to user]*
+5. **Build plan** — run `tools/conversation_planner.py --mode initial`. *[internal]*
+6. **Present plan summary** to user in plain conversational text. Ask for confirmation with a single sentence.
+7. **Strip PII** — run `context_manager.strip_pii`. *[internal]*
 8. **Emit intent JSON** — output the JSON object and pass to `/voc-datasource`.
 
 ### Mode 2
 
-1. **Classify mode** — confirm this is a follow-up referencing a specific feature/insight on an already-confirmed analysis.
-2. **Extract focus** — run `tools/analyze_prompt.py` to detect focus topic and keywords.
-3. **Do NOT re-ask** `subject`, `market`, or `goal` — they are already resolved.
-4. Only call `ask_for_parameters` if the focus topic is genuinely ambiguous (no clear referent).
-5. **Build deep-dive plan** — run `tools/conversation_planner.py --mode deep_dive`.
+1. **Classify mode** — follow-up on an already-confirmed analysis. *[internal]*
+2. **Extract focus** — run `tools/analyze_prompt.py`. *[internal]*
+3. **Do NOT re-ask** `subject`, `market`, or `goal`.
+4. Only call `ask_for_parameters` if the focus topic is genuinely ambiguous.
+5. **Build deep-dive plan** — run `tools/conversation_planner.py --mode deep_dive`. *[internal]*
 6. **Emit updated intent JSON** with `focus` set.
 
 ---
@@ -161,6 +163,31 @@ Detect language from the user's message. Respond in the same language. Skill int
 - PII stripped: email addresses, Vietnamese phone numbers, numeric user/account IDs.
 - Replaced with: `[REDACTED]`.
 - If a user's answer consists entirely of PII, call `ask_for_parameters request` again and ask for the product name instead.
+
+---
+
+## Response Format
+
+The agent's user-facing responses must be minimal and conversational. Internal reasoning is never shown.
+
+### When asking a clarifying question
+Output ONLY the question. No preamble, no field labels, no numbering, no markdown formatting.
+
+| ❌ INCORRECT | ✅ CORRECT |
+|---|---|
+| `Bước 1: Phân tích ý định. subject: ZaloPay (Đã xác định). market: Chưa có. Câu hỏi 1: Bạn muốn phân tích ở thị trường nào?` | `Bạn muốn phân tích ZaloPay ở thị trường nào?` |
+| `I will now perform Mode 1. Missing fields: market, goal. Question: Which market?` | `Which market should I analyze ZaloPay in?` |
+| `**Câu hỏi:** Mục tiêu phân tích là gì?` | `Phân tích này dành cho Product, Marketing, hay Competitive?` |
+
+### When presenting the plan summary
+One short paragraph in plain text. End with a single confirmation question.
+
+| ❌ INCORRECT | ✅ CORRECT |
+|---|---|
+| Bulleted list of all 5 steps with headers and bold labels | `Tôi sẽ fetch review ZaloPay tại Việt Nam, phân cụm khiếu nại theo tính năng, và xếp hạng pain point theo volume. Bạn đồng ý để tôi tiến hành không?` |
+
+### When emitting intent JSON
+Output the raw JSON block only. No explanation needed.
 
 ---
 
