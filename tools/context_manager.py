@@ -94,12 +94,16 @@ def _strip_pii_recursive(obj):
 # Intent skeleton
 # ---------------------------------------------------------------------------
 
+ALL_DATA_SOURCES = ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"]
+
+
 def _empty_intent() -> dict:
     return {
         "subject": None,
         "market": None,
         "goal": None,
         "focus": None,
+        "data_source": list(ALL_DATA_SOURCES),  # default = all 6 sources
         "filters": {
             "time_range": "last_90_days",
             "platform": "all",

@@ -1,6 +1,6 @@
 ---
 name: voc-task-understanding
-description: "Voice of Customer (VoC) — Task Understanding & Interactive Reasoning. Parses user intent for product/market/competitive analysis requests, demands missing parameters via ask_for_parameters tool before proceeding, builds a structured analysis plan, and maintains conversation context for deep-dive follow-ups. Trigger: any request to analyze an app, product, brand, or customer feedback (e.g., 'analyze MoMo', 'why is Login complained about', 'deep dive checkout issues', 'what are users saying about feature X', 'compare ZaloPay vs MoMo'). Outputs a flat intent JSON for downstream skills (data source, report). DO NOT use for data fetching (/voc-datasource) or report rendering (/voc-report)."
+description: "Voice of Customer (VoC) — Task Understanding & Interactive Reasoning. Parses user intent for product/marketing/quality analysis requests, demands missing parameters via ask_for_parameters tool before proceeding, builds a structured role-based analysis plan (PO, MKT, QE), and maintains conversation context for deep-dive follow-ups. Trigger: any request to analyze an app, product, brand, or customer feedback (e.g., 'analyze MoMo', 'why is Login complained about', 'deep dive checkout issues', 'what are users saying about feature X'). Outputs a flat intent JSON for downstream skills (data source, report). DO NOT use for data fetching (/voc-datasource) or report rendering (/voc-report)."
 ---
 
 # VoC Task Understanding & Interactive Reasoning
@@ -55,7 +55,7 @@ Skipping any item is not permitted regardless of how confident the agent is abou
    - Repeat until all required fields are resolved.
 4. **Verify Pre-Output Gate checklist** — all 5 items checked. *[internal — do not show checklist to user]*
 5. **Build plan** — run `tools/conversation_planner.py --mode initial`. *[internal]*
-6. **Present plan summary** to user in plain conversational text. Ask for confirmation with a single sentence.
+6. **Present plan summary** to user in plain conversational text. Include which data sources will be used and invite the user to adjust sources or confirm with a single sentence.
 7. **Strip PII** — run `context_manager.strip_pii`. *[internal]*
 8. **Emit intent JSON** — output the JSON object and pass to `/voc-datasource`.
 
@@ -94,7 +94,8 @@ tools/ask_for_parameters.py respond
 - One call per missing field. Never bundle two fields in one call.
 - If `status = max_retries_reached`, use a sensible default and proceed without asking again.
 - If `status = invalid_value`, call `request` again for that field.
-- `goal` valid values: `product`, `marketing`, `competitive`.
+- `goal` valid values: `product`, `marketing`, `quality`.
+- `data_source` valid values: `App Store`, `CH Play`, `Youtube`, `Voz`, `Tinhte`, `Reddit`, `All`.
 
 ---
 
@@ -104,7 +105,8 @@ tools/ask_for_parameters.py respond
 |---|---|
 | **Subject** | Product, app, brand, or feature being analyzed (e.g., "MoMo", "Login flow"). Required. |
 | **Market** | Geographic or demographic scope (e.g., "Vietnam", "Southeast Asia"). Required. |
-| **Goal** | `product` (feature/UX insights) \| `marketing` (brand/perception) \| `competitive` (vs. competitors). Required. |
+| **Goal** | `product` (feature/UX — PO lens) \| `marketing` (brand/perception — MKT lens) \| `quality` (bugs/ratings — QE lens). Required. |
+| **Data Source** | Which platforms to pull reviews from. Default = all: `App Store`, `CH Play`, `Youtube`, `Voz`, `Tinhte`, `Reddit`. Updatable during plan confirmation. |
 | **Focus** | Sub-scope for deep dives (e.g., "Login", "Payment timeout"). Optional, set in Mode 2. |
 | **Filters** | Optional: time range, platform, sentiment, keywords. Defaults applied if not specified. |
 | **Clarifications Done** | Ordered list of fields resolved via `ask_for_parameters` this session. |
@@ -120,6 +122,7 @@ tools/ask_for_parameters.py respond
 | `subject` | ✅ | — must ask |
 | `market` | ✅ | — must ask |
 | `goal` | ✅ | — must ask |
+| `data_source` | ❌ | all 6 sources |
 | `focus` | ❌ | `null` |
 | `filters.time_range` | ❌ | `last_90_days` |
 | `filters.platform` | ❌ | `all` |
@@ -177,14 +180,14 @@ Output ONLY the question. No preamble, no field labels, no numbering, no markdow
 |---|---|
 | `Bước 1: Phân tích ý định. subject: ZaloPay (Đã xác định). market: Chưa có. Câu hỏi 1: Bạn muốn phân tích ở thị trường nào?` | `Bạn muốn phân tích ZaloPay ở thị trường nào?` |
 | `I will now perform Mode 1. Missing fields: market, goal. Question: Which market?` | `Which market should I analyze ZaloPay in?` |
-| `**Câu hỏi:** Mục tiêu phân tích là gì?` | `Phân tích này dành cho Product, Marketing, hay Competitive?` |
+| `**Câu hỏi:** Mục tiêu phân tích là gì?` | `Mục tiêu phân tích MoMo này là gì? [Product] [Marketing] [Quality]` |
 
 ### When presenting the plan summary
 One short paragraph in plain text. End with a single confirmation question.
 
 | ❌ INCORRECT | ✅ CORRECT |
 |---|---|
-| Bulleted list of all 5 steps with headers and bold labels | `Tôi sẽ fetch review ZaloPay tại Việt Nam, phân cụm khiếu nại theo tính năng, và xếp hạng pain point theo volume. Bạn đồng ý để tôi tiến hành không?` |
+| Bulleted list of all 6 steps with headers and bold labels | `Tôi sẽ fetch review ZaloPay từ App Store, CH Play, Voz (tất cả nguồn) tại Việt Nam, tag theo tính năng, xếp hạng pain point theo độ nghiêm trọng, và gợi ý action items cho roadmap. Bạn muốn điều chỉnh nguồn dữ liệu không, hay tiến hành luôn?` |
 
 ### When emitting intent JSON
 Output the raw JSON block only. No explanation needed.
@@ -199,8 +202,8 @@ User:   Analyze MoMo
 Agent:  → ask_for_parameters(field=market, question="Which market should I analyze MoMo in?")
 User:   Vietnam
 Agent:  → ask_for_parameters.respond(field=market, value="Vietnam")
-        → ask_for_parameters(field=goal, question="Is this for Product, Marketing, or Competitive analysis?",
-                             options=["product","marketing","competitive"])
+        → ask_for_parameters(field=goal, question="What is the goal of this MoMo analysis?",
+                             options=["Product","Marketing","Quality"])
 User:   Product
 Agent:  → ask_for_parameters.respond(field=goal, value="product")
         → verify Pre-Output Gate ✅

@@ -42,16 +42,35 @@ REQUIRED_FIELDS = ["subject", "market", "goal"]
 GOAL_KEYWORDS = {
     "product": [
         "product", "feature", "ux", "user experience", "usability",
-        "bug", "crash", "performance", "flow", "ui", "sản phẩm", "tính năng",
+        "flow", "ui", "roadmap", "sản phẩm", "tính năng", "trải nghiệm",
     ],
     "marketing": [
         "marketing", "brand", "perception", "awareness", "campaign",
-        "acquisition", "retention", "thương hiệu", "quảng cáo",
+        "acquisition", "retention", "thương hiệu", "quảng cáo", "nhận thức",
     ],
-    "competitive": [
-        "competitive", "competitor", "vs", "versus", "compare",
-        "benchmark", "đối thủ", "so sánh",
+    "quality": [
+        "quality", "bug", "crash", "error", "defect", "qe", "test",
+        "performance", "rating", "lỗi", "chất lượng", "kiểm thử", "sự cố",
     ],
+}
+
+# Supported data sources (shown to user as options)
+ALL_DATA_SOURCES = ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"]
+
+DATA_SOURCE_TOKENS = {
+    "app store": "App Store",
+    "appstore": "App Store",
+    "ios": "App Store",
+    "ch play": "CH Play",
+    "chplay": "CH Play",
+    "google play": "CH Play",
+    "play store": "CH Play",
+    "android": "CH Play",
+    "youtube": "Youtube",
+    "voz": "Voz",
+    "tinhte": "Tinhte",
+    "tinh tế": "Tinhte",
+    "reddit": "Reddit",
 }
 
 DEEP_DIVE_PATTERNS = [
@@ -172,6 +191,19 @@ def _extract_subject(text: str) -> str | None:
     return None
 
 
+def _extract_data_sources(text: str) -> list[str] | None:
+    """
+    Detects explicit data source mentions in the user message.
+    Returns a list of matched sources, or None if none found.
+    """
+    text_lower = text.lower()
+    found = []
+    for token, source in DATA_SOURCE_TOKENS.items():
+        if token in text_lower and source not in found:
+            found.append(source)
+    return found if found else None
+
+
 def _extract_market(text: str) -> str | None:
     """
     Fix #10: pattern-first approach, then token list fallback.
@@ -226,6 +258,7 @@ def parse(message: str, context: dict) -> dict:
         _extract_focus(message, context.get("subject") or extracted_subject)
         if is_deep_dive else None
     )
+    extracted_sources = _extract_data_sources(message)
 
     # Merge: only fill fields still null/missing in context
     intent = dict(context)
@@ -237,6 +270,9 @@ def parse(message: str, context: dict) -> dict:
         intent["goal"] = extracted_goal
     if extracted_focus:
         intent["focus"] = extracted_focus
+    # data_source: overwrite only if user explicitly named sources
+    if extracted_sources:
+        intent["data_source"] = extracted_sources
 
     # Fix #7: deep_dive mode only when ALL required fields already resolved
     all_resolved = all(intent.get(f) for f in REQUIRED_FIELDS)
@@ -255,6 +291,7 @@ def parse(message: str, context: dict) -> dict:
 
     # Ensure keys exist
     intent.setdefault("focus", None)
+    intent.setdefault("data_source", list(ALL_DATA_SOURCES))  # default = all sources
     intent.setdefault("filters", {})
     intent.setdefault("clarifications_done", [])
     intent.setdefault("plan_steps", [])

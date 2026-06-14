@@ -54,9 +54,10 @@ from datetime import datetime, timezone
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_FIELDS = ["subject", "market", "goal", "focus"]
+VALID_FIELDS = ["subject", "market", "goal", "focus", "data_source"]
 FIELD_OPTIONS = {
-    "goal": ["product", "marketing", "competitive"],
+    "goal": ["product", "marketing", "quality"],
+    "data_source": ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit", "All"],
 }
 MAX_RETRIES = 2  # After this many failed attempts, agent should use default
 
@@ -202,7 +203,8 @@ def reset(session_id: str) -> dict:
 TOOL_SCHEMA = {
     "name": "ask_for_parameters",
     "description": (
-        "Call this tool when a required parameter (subject, market, goal) is missing or ambiguous. "
+        "Call this tool when a required parameter (subject, market, goal) is missing or ambiguous, "
+        "or when the user wants to update data_source. "
         "Execution is blocked until the user provides the value. "
         "Call ONCE per missing field — do NOT bundle multiple fields in one call. "
         "Do NOT proceed to plan building or intent JSON emission while status is 'awaiting_user'."

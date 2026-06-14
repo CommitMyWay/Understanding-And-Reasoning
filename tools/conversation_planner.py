@@ -44,57 +44,84 @@ import sys
 # Plan templates
 # ---------------------------------------------------------------------------
 
-# initial mode: steps keyed by goal
+# ---------------------------------------------------------------------------
+# Role labels shown in plan summary
+# ---------------------------------------------------------------------------
+
+ROLE_LABELS = {
+    "product": "Product Owner (PO)",
+    "marketing": "Marketing (MKT)",
+    "quality": "Quality Engineering (QE)",
+}
+
+# ---------------------------------------------------------------------------
+# initial mode: 6-step role-based plan templates
+# ---------------------------------------------------------------------------
+
 INITIAL_PLAN_TEMPLATES = {
+    # PO lens: understand what to build / fix next on the roadmap
     "product": [
-        "Fetch {subject} product reviews from {market} ({time_range}, {platform})",
-        "Cluster user complaints by feature area using topic modelling",
+        "Fetch {subject} reviews from {data_source_str} in {market} ({time_range})",
+        "Tag each review with a feature label (Login, Payment, Onboarding, Performance, Other)",
         "Rank feature clusters by complaint volume and negative sentiment score",
-        "Identify top-3 pain points with representative user quotes",
-        "Flag anomalies and sudden complaint spikes by date",
+        "Score top pain points by severity (1-star vs 2-star review ratio)",
+        "Extract representative user quotes for the top 3 pain points",
+        "Map findings to roadmap impact (High / Med / Low) and draft prioritised action items",
     ],
+    # MKT lens: brand perception, sentiment, acquisition signals
     "marketing": [
-        "Fetch {subject} brand mentions and ratings from {market} ({time_range}, {platform})",
-        "Analyse overall sentiment trend over the selected time range",
-        "Identify top brand perception themes (positive and negative)",
-        "Benchmark net promoter signals against category baseline",
-        "Surface top-quoted user phrases for messaging opportunities",
+        "Fetch {subject} reviews and mentions from {data_source_str} in {market} ({time_range})",
+        "Run sentiment trend analysis — positive / neutral / negative ratio over time",
+        "Extract top brand perception keywords and recurring themes",
+        "Identify promoter language (what happy users say) vs detractor language",
+        "Flag acquisition friction points mentioned in onboarding and first-use reviews",
+        "Recommend 3–5 messaging angles and campaign talking points backed by user language",
     ],
-    "competitive": [
-        "Fetch {subject} reviews alongside key competitor reviews from {market} ({time_range})",
-        "Compare complaint volume and sentiment scores across competitors",
-        "Identify feature gaps where {subject} lags behind competitors",
-        "Highlight areas where {subject} outperforms on user satisfaction",
-        "Summarise competitive positioning with supporting data points",
+    # QE lens: bugs, crashes, regressions for dev/QA handoff
+    "quality": [
+        "Fetch 1-star and 2-star {subject} reviews from {data_source_str} in {market} ({time_range})",
+        "Classify defects by category: crash / UI bug / performance / data integrity / other",
+        "Score each defect class by frequency and user-impact severity",
+        "Break down by platform (iOS App Store vs Android CH Play) and recency (last 30 days vs prior)",
+        "Flag potential regressions — spike in complaint volume compared to previous period",
+        "Output structured bug-report summary with severity labels, ready for Jira / dev handoff",
     ],
 }
 
-# deep_dive mode: sub-steps injected before a focus-specific drill
+# deep_dive mode: 6 sub-steps drilling into a specific focus topic
 DEEP_DIVE_PREFIX = [
-    "Filter review corpus to complaints mentioning {focus}",
-    "Re-cluster {focus} complaints into sub-themes",
+    "Filter {subject} review corpus to all mentions of {focus} from {data_source_str}",
+    "Re-cluster {focus} complaints into granular sub-themes (e.g. error type, user action, platform)",
     "Rank sub-themes by frequency and severity score",
-    "Extract representative user quotes for each sub-theme",
-    "Trace complaint volume trend for {focus} over time to detect regression points",
+    "Extract the 3 most representative user quotes per sub-theme",
+    "Trace {focus} complaint volume trend over {time_range} — identify regression spike dates",
+    "Summarise root-cause hypotheses per sub-theme with supporting evidence",
 ]
 
-# Summary templates for the agent's natural-language plan confirmation message
+# ---------------------------------------------------------------------------
+# Summary templates (natural-language confirmation message shown to user)
+# ---------------------------------------------------------------------------
+
 SUMMARY_TEMPLATES = {
     "product": (
-        "I'll fetch {subject} reviews from {market}, cluster complaints by feature area, "
-        "and surface the top pain points with supporting quotes."
+        "I'll fetch {subject} reviews from {data_source_str} in {market} (last {time_range}), "
+        "tag complaints by feature, rank pain points by severity, and map them to roadmap priorities. "
+        "Want to adjust the data sources or proceed?"
     ),
     "marketing": (
-        "I'll analyse {subject} brand perception in {market}, track sentiment trends, "
-        "and identify the strongest positive and negative themes."
+        "I'll pull {subject} mentions and reviews from {data_source_str} in {market} (last {time_range}), "
+        "analyse sentiment trends, surface brand themes, and recommend messaging angles. "
+        "Want to adjust the data sources or proceed?"
     ),
-    "competitive": (
-        "I'll compare {subject} against its competitors in {market}, "
-        "identify feature gaps, and summarise competitive positioning."
+    "quality": (
+        "I'll scan 1–2 star {subject} reviews from {data_source_str} in {market} (last {time_range}), "
+        "classify defects, flag regressions, and produce a bug-report summary for the dev team. "
+        "Want to adjust the data sources or proceed?"
     ),
     "deep_dive": (
-        "I'll deep-dive into the {focus} complaint cluster for {subject} in {market}, "
-        "break it into sub-themes, and trace when issues started spiking."
+        "I'll drill into the {focus} complaint cluster for {subject} in {market} "
+        "across {data_source_str}, break it into sub-themes, and identify when issues started spiking. "
+        "Shall I proceed?"
     ),
 }
 
@@ -135,8 +162,18 @@ def build_plan(intent: dict, mode: str = "initial") -> dict:
     goal = intent.get("goal", "product")
     focus = intent.get("focus")
     filters = intent.get("filters", {})
+    data_source = intent.get("data_source") or ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"]
 
     filter_desc = _describe_filters(filters)
+
+    # Human-readable source list: ≤3 shown, then "+ N more"
+    if len(data_source) <= 3:
+        data_source_str = ", ".join(data_source)
+    elif len(data_source) == len(["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit"]):
+        data_source_str = "all sources (App Store, CH Play, Youtube, Voz, Tinhte, Reddit)"
+    else:
+        data_source_str = ", ".join(data_source[:3]) + f" + {len(data_source) - 3} more"
+
     vars_ = {
         "subject": subject,
         "market": market,
@@ -145,6 +182,8 @@ def build_plan(intent: dict, mode: str = "initial") -> dict:
         "time_range": filter_desc["time_range"],
         "platform": filter_desc["platform"],
         "sentiment": filter_desc["sentiment"],
+        "data_source_str": data_source_str,
+        "role_label": ROLE_LABELS.get(goal, ""),
     }
 
     if mode == "deep_dive" and focus:

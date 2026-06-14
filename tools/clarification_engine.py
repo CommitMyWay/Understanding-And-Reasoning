@@ -52,13 +52,16 @@ QUESTIONS = {
         "vi": "Bạn muốn phân tích sản phẩm hoặc ứng dụng nào?",
     },
     "market": {
-        "en": "Which market would you like to focus on? (e.g., Vietnam, Southeast Asia)",
-        "vi": "Bạn muốn phân tích thị trường nào? (ví dụ: Việt Nam, Đông Nam Á)",
+        "en": "Which market would you like to focus on?",
+        "vi": "Bạn muốn phân tích thị trường nào?",
     },
-    # Fix #11: added 'competitive' as third option
     "goal": {
-        "en": "Is this analysis for **Product** insights, **Marketing** insights, or **Competitive** benchmarking?",
-        "vi": "Phân tích này dành cho **Product**, **Marketing**, hay **Competitive** (so sánh đối thủ)?",
+        "en": "What is the goal of this analysis?",
+        "vi": "Mục tiêu phân tích này là gì?",
+    },
+    "data_source": {
+        "en": "Which data sources should I pull from?",
+        "vi": "Bạn muốn lấy dữ liệu từ nguồn nào?",
     },
 }
 
@@ -67,18 +70,17 @@ QUESTIONS_WITH_SUBJECT = {
         "en": "Which market should I analyze {subject} in?",
         "vi": "Tôi nên phân tích {subject} ở thị trường nào?",
     },
-    # Fix #11: competitive included
     "goal": {
-        "en": "Is this analysis of {subject} for Product insights, Marketing insights, or Competitive benchmarking?",
-        "vi": "Phân tích {subject} này dành cho Product, Marketing, hay Competitive (so sánh đối thủ)?",
+        "en": "What is the goal of this {subject} analysis?",
+        "vi": "Mục tiêu phân tích {subject} này là gì?",
     },
 }
 
 # Retry prompts when first answer was ambiguous
 RETRY_QUESTIONS = {
     "goal": {
-        "en": "Please choose one: **product** (feature/UX issues), **marketing** (brand perception), or **competitive** (vs. competitors).",
-        "vi": "Vui lòng chọn một: **product** (vấn đề tính năng/UX), **marketing** (nhận thức thương hiệu), hoặc **competitive** (so sánh đối thủ).",
+        "en": "Please choose one: Product (feature/UX), Marketing (brand & perception), or Quality (bugs & ratings).",
+        "vi": "Vui lòng chọn một: Product (tính năng/UX), Marketing (thương hiệu), hoặc Quality (lỗi & chất lượng).",
     },
     "market": {
         "en": "Please specify a market or region (e.g., Vietnam, Southeast Asia, Global).",
@@ -87,6 +89,23 @@ RETRY_QUESTIONS = {
     "subject": {
         "en": "Please provide the product or app name you want to analyze.",
         "vi": "Vui lòng cung cấp tên sản phẩm hoặc ứng dụng bạn muốn phân tích.",
+    },
+}
+
+# Options for each field — presented as clickable choices; user can always type their own
+QUESTION_OPTIONS = {
+    "subject": None,  # free-text only
+    "market": {
+        "en": ["Vietnam", "Southeast Asia", "Global"],
+        "vi": ["Việt Nam", "Đông Nam Á", "Toàn cầu"],
+    },
+    "goal": {
+        "en": ["Product", "Marketing", "Quality"],
+        "vi": ["Product", "Marketing", "Quality"],
+    },
+    "data_source": {
+        "en": ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit", "All sources"],
+        "vi": ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit", "Tất cả"],
     },
 }
 
@@ -163,12 +182,19 @@ def get_clarification_question(
         else:
             question = QUESTIONS[field][lang]
 
-        return {
+        # Attach options if available for this field
+        field_opts = QUESTION_OPTIONS.get(field)
+        options = field_opts[lang] if isinstance(field_opts, dict) else None
+
+        result = {
             "field": field,
             "question": question,
             "language": lang,
             "attempt_number": field_attempts + 1,
         }
+        if options:
+            result["options"] = options
+        return result
 
     # All missing fields have hit max retries
     return None
