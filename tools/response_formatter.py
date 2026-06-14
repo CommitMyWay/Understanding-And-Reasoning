@@ -109,13 +109,8 @@ def fmt_questions(message: str, questions: list[dict]) -> dict:
 
         choices = list(options)
 
-        # Append "Suggest another X..." if there are already options (makes sense for enumerated fields)
-        if options:
-            field_label = FIELD_LABELS.get(field, field)
-            suggest_label = SUGGEST_ANOTHER_SUFFIX[lang].format(field=field_label)
-            choices.append(suggest_label)
-
-        # Always append "Other (type your own)..."
+        # Always append "Other (type your own)..." as the escape hatch
+        # (no "Suggest another X..." — kept to max 3 curated + 1 Other)
         choices.append(FREE_TEXT_SUFFIX.get(lang, FREE_TEXT_SUFFIX["en"]))
 
         suggested.append({

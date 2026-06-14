@@ -107,17 +107,17 @@ Skipping any item is not permitted regardless of how confident the agent is abou
 ### Mode 1
 
 1. **Classify mode** — confirm new analysis (not follow-up). *[internal]*
-2. **Echo query** — call `tools/response_formatter.py query --message "<user input>"`. Output the result verbatim.
-3. **Parse intent** — run `tools/analyze_prompt.py`. *[internal]*
-4. **Check missing required fields** (`subject`, `market`, `target_user`, `goal`). If any null:
-   - Call `tools/clarification_engine.py --batch` to get all missing questions at once.
-   - Call `tools/response_formatter.py questions --message "..." --questions '[...]'`.
-   - **STOP. Output the `suggestedQuestions` JSON verbatim. Nothing else.**
-   - For each user answer, call `tools/ask_for_parameters.py respond` to record the value.
-   - Re-run `analyze_prompt.py` and repeat until all fields resolved.
+2. **Parse intent** — run `tools/analyze_prompt.py`. *[internal]*
+3. **Check missing required fields** (`subject`, `market`, `target_user`, `goal`). If any null:
+   - Call `tools/clarification_engine.py --batch` to get **ALL** missing questions at once (single call).
+   - Call `tools/response_formatter.py questions --message "<user input>" --questions '[...]'`.
+   - **STOP. Output the JSON verbatim — it already contains `query` + `suggestedQuestions`. Do NOT emit a separate query echo first.**
+   - Wait for user answers. Record each via `tools/ask_for_parameters.py respond`.
+   - Re-run `analyze_prompt.py` with all answers combined; repeat step 3 only if still missing.
+4. **All fields resolved (no questions)** — emit `tools/response_formatter.py query`. *(echo only when going straight to plan)*
 5. **Verify Pre-Output Gate** — all items checked. *[internal]*
 6. **Build plan** — run `tools/conversation_planner.py --mode initial`. *[internal]*
-7. **Present confirmation** — call `tools/response_formatter.py focus_area --message "..." --intent '...'`. Output verbatim.
+7. **Present confirmation** — call `tools/response_formatter.py focus_area --message "<user input>" --intent '...'`. Output verbatim.
 8. **Wait for user confirm** — accepted keywords: yes / go / confirm / ok / đồng ý / tiến hành / ...
 9. **Strip PII** — run `context_manager.strip_pii`. *[internal]*
 10. **Emit execution plan** — call `tools/response_formatter.py plan --message "<confirm word>" --intent '...'`. Output verbatim → pass to `/voc-datasource`.

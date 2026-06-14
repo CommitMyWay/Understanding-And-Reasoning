@@ -26,6 +26,7 @@ import sys
 
 FIELD_PRIORITY = ["subject", "market", "target_user", "goal"]
 MAX_RETRIES_PER_FIELD = 2
+MAX_CHOICES_PER_FIELD = 3   # curated options shown before "Other (type your own)..."
 
 # ---------------------------------------------------------------------------
 # Smart market hints per subject
@@ -218,13 +219,13 @@ def _build_one_question(
         hint = GOAL_EXAMPLES.get(examples_key, GOAL_EXAMPLES["product"])[lang]
         question = f"{question} ({hint})"
 
-    # Determine options
+    # Determine options — cap at MAX_CHOICES_PER_FIELD to avoid cognitive overload
     if field == "market":
-        options = _get_market_options(subject, lang)
+        options = _get_market_options(subject, lang)[:MAX_CHOICES_PER_FIELD]
     elif field in STATIC_OPTIONS:
-        options = STATIC_OPTIONS[field][lang]
+        options = STATIC_OPTIONS[field][lang][:MAX_CHOICES_PER_FIELD]
     else:
-        options = None  # free-text (subject, goal)
+        options = None  # free-text (subject, goal): no curated options
 
     result = {
         "field":          field,
