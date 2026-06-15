@@ -82,7 +82,7 @@ Then run `clarify` again. The result is the **second-round** shape — same ques
 ```
 user input
    │
-   ├─ merge into STATE (raw_query = latest input)
+   ├─ merge into STATE
    ├─ normalize role + data sources
    ├─ run `validate`
    │

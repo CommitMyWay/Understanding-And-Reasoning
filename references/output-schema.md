@@ -1,35 +1,20 @@
 # Output Schema — Frontend JSON Contract
 
-The agent's response is **JSON only** — no natural-language prose around it.
-
-On the **first** turn of a conversation the agent emits two objects (JSONL, one per line):
-
-1. The **query echo**: `{"query": "<the user's first input>"}` — emitted **once** only.
-2. The **response envelope**: one of `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`.
+The agent's response is **JSON only** — no natural-language prose — and is a **single response
+envelope** object: one of `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`.
 
 ```
-{"query": "I am a Marketer in fintech company. Please help me research VNG"}
 {"response_type": "CLARIFICATION_REQUIRED", "payload": { ... }}
 ```
 
-On **every later turn** (answers to clarifications) only the response envelope is emitted —
-the `query` line is **not** repeated. `response_type` is **always exactly** one of the three
-strings above (case-sensitive).
+`response_type` is **always exactly** one of the three strings above (case-sensitive).
+
+> **No `query` field.** The frontend owns the `query` value (it forwards the user's request
+> elsewhere); echoing it is out of scope for this skill and never appears in the output.
 
 ---
 
-## 1. Query echo
-
-```json
-{ "query": "I am a Marketer in fintech company. Please help me research VNG" }
-```
-
-Emitted **once**, on the first user input only (when `state.raw_query` is set). It is a
-standalone object on its own line and is never embedded inside the response envelope.
-
----
-
-## 2. `CLARIFICATION_REQUIRED`
+## 1. `CLARIFICATION_REQUIRED`
 
 Sent when the request is missing one or more **gating fields**, or when a previous answer was
 ambiguous/invalid.
@@ -111,7 +96,7 @@ for *"I am a Marketer ... research VNG"* — note the choices are specific to VN
 
 ---
 
-## 3. `PLAN_CONFIRMATION`
+## 2. `PLAN_CONFIRMATION`
 
 Sent when all four gating fields are present. Defaults are applied by the tool.
 
@@ -164,7 +149,7 @@ Aliases accepted on input: "App Store"/"iOS" → `app_store`; "CH Play"/"Google 
 
 ---
 
-## 4. `ERROR`
+## 3. `ERROR`
 
 Sent on garbled or unusable input.
 

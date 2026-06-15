@@ -14,11 +14,11 @@ Subcommands:
   plan      -> PLAN_CONFIRMATION envelope (intent + plan, with defaults applied)
   error     -> ERROR envelope
 
-Output contract — the FE expects TWO SEPARATE JSON objects ("2 object rời"):
-  line 1: {"query": "<raw user input>"}    (emitted whenever raw_query is present)
-  line 2: {"response_type": "...", ...}     (the response envelope)
-Each object is printed as compact single-line JSON (JSONL) so the FE splits by line.
-(`validate` prints a single internal object and is NOT sent to the FE.)
+Output: a SINGLE response envelope object, printed as compact single-line JSON:
+  {"response_type": "...", ...}
+(`validate` prints a single internal object for the agent, NOT sent to the FE.)
+There is no `query` field — the frontend owns that value (it forwards the request
+elsewhere); it is out of this skill's scope.
 
 Standard library only — no third-party dependencies.
 
@@ -26,7 +26,7 @@ Usage:
   python voc_reasoning.py validate '<state-json>'
   python voc_reasoning.py clarify  '<state-json>'
   python voc_reasoning.py plan     '<state-json>'
-  python voc_reasoning.py error    '<message>' [--query '<raw user input>']
+  python voc_reasoning.py error    '<message>'
 """
 
 import json
@@ -365,10 +365,8 @@ def build_error(message):
 # --------------------------------------------------------------------------- #
 
 
-def emit(query, envelope):
-    """Print the two FE objects as JSONL: optional {query} line, then envelope line."""
-    if query:
-        sys.stdout.write(json.dumps({"query": query}, ensure_ascii=False) + "\n")
+def emit(envelope):
+    """Print the response envelope as a single compact JSON object."""
     sys.stdout.write(json.dumps(envelope, ensure_ascii=False) + "\n")
 
 
@@ -381,55 +379,44 @@ def _parse_state(raw):
 
 def main(argv):
     if len(argv) < 2:
-        emit(None, build_error("Missing subcommand. Use: validate | clarify | plan | error"))
+        emit(build_error("Missing subcommand. Use: validate | clarify | plan | error"))
         return 1
 
     cmd = argv[1]
 
     if cmd == "error":
-        message, query = None, None
-        rest = argv[2:]
-        i = 0
-        while i < len(rest):
-            if rest[i] == "--query":
-                query = rest[i + 1] if i + 1 < len(rest) else None
-                i += 2
-            else:
-                message = rest[i]
-                i += 1
-        emit(query, build_error(message))
+        message = argv[2] if len(argv) > 2 else None
+        emit(build_error(message))
         return 0
 
     if len(argv) < 3:
-        emit(None, build_error("Missing state JSON argument."))
+        emit(build_error("Missing state JSON argument."))
         return 1
 
     try:
         state = _parse_state(argv[2])
     except Exception as exc:  # malformed input -> ERROR envelope, never a crash
-        emit(None, build_error("Invalid state JSON: %s" % exc))
+        emit(build_error("Invalid state JSON: %s" % exc))
         return 1
-
-    query = state.get("raw_query")
 
     # Defense in depth: any unforeseen builder fault becomes an ERROR envelope,
     # never a traceback ("malformed input -> ERROR envelope, never a crash").
     try:
         if cmd == "validate":
-            # Internal helper only — single object, not part of the FE contract.
+            # Internal helper only — single object, for the agent (not the FE).
             sys.stdout.write(json.dumps(build_validate(state), ensure_ascii=False) + "\n")
             return 0
         if cmd == "clarify":
-            emit(query, build_clarification(state))
+            emit(build_clarification(state))
             return 0
         if cmd == "plan":
-            emit(query, build_plan(state))
+            emit(build_plan(state))
             return 0
     except Exception as exc:
-        emit(query, build_error("Internal error: %s" % exc))
+        emit(build_error("Internal error: %s" % exc))
         return 1
 
-    emit(query, build_error("Unknown subcommand: %s" % cmd))
+    emit(build_error("Unknown subcommand: %s" % cmd))
     return 1
 
 

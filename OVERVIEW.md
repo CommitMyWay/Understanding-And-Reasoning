@@ -21,7 +21,8 @@ or generate reports.
 - If anything is missing, returns batched clarifying questions (≤3 choices each, always with a
   free-text option) as `CLARIFICATION_REQUIRED`.
 - When complete, returns a scoped `PLAN_CONFIRMATION` with intent + plan summary + estimated scope.
-- Returns `ERROR` on unusable input. Echoes every user input back as a `{"query": ...}` object.
+- Returns `ERROR` on unusable input. Output is JSON only — a single response envelope (the
+  frontend owns the `query` value, so it is not part of this skill's output).
 
 ## Files
 
@@ -36,11 +37,11 @@ or generate reports.
 
 ```bash
 # Fully specified prompt -> PLAN_CONFIRMATION
-python tools/voc_reasoning.py plan '{"raw_query":"I am a Marketer ... Zalopay transfer money","role":"Marketing","subject":"Zalopay","focus":"transfer money","objective":"research negative 1,2 star feedback and propose improvements","data_sources":["App Store","CH Play"]}'
+python tools/voc_reasoning.py plan '{"role":"Marketing","subject":"Zalopay","focus":"transfer money","objective":"research negative 1,2 star feedback and propose improvements","data_sources":["App Store","CH Play"]}'
 
 # Missing fields -> CLARIFICATION_REQUIRED (agent authors contextual choices)
-python tools/voc_reasoning.py clarify '{"raw_query":"I am a Marketer, research VNG","role":"Marketing","subject":"VNG","questions":[{"key":"focus","type":"single_select","question":"Which VNG product should we focus on?","choices":["ZaloPay payments","ZaloPay wallet top-up","Zalo app"],"recommended":"ZaloPay payments","allow_other":true},{"key":"objective","type":"single_select","question":"What is your objective?","choices":["Find negative feedback & improve","Benchmark vs MoMo/VNPay"],"allow_other":true}]}'
+python tools/voc_reasoning.py clarify '{"role":"Marketing","subject":"VNG","questions":[{"key":"focus","type":"single_select","question":"Which VNG product should we focus on?","choices":["ZaloPay payments","ZaloPay wallet top-up","Zalo app"],"recommended":"ZaloPay payments","allow_other":true},{"key":"objective","type":"single_select","question":"What is your objective?","choices":["Find negative feedback & improve","Benchmark vs MoMo/VNPay"],"allow_other":true}]}'
 
 # Re-clarify a bad role answer -> CLARIFICATION_REQUIRED with reason
-python tools/voc_reasoning.py clarify '{"raw_query":"I am a DEV","clarify_fields":["role"],"reclarify_reason":"DEV is not a supported role; pick Marketing or Product Owner."}'
+python tools/voc_reasoning.py clarify '{"clarify_fields":["role"],"reclarify_reason":"DEV is not a supported role; pick Marketing or Product Owner."}'
 ```

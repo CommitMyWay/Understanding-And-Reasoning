@@ -37,7 +37,6 @@ user's new input into it, then pass it to the tool. Shape:
 
 ```json
 {
-  "raw_query": "<the user's FIRST raw input — set on turn 1 ONLY, omit afterwards>",
   "role": null,            // -> "Marketing" | "Product Owner" (normalize synonyms yourself)
   "subject": null,         // company/product, e.g. "Zalopay"
   "focus": null,           // feature/topic, e.g. "transfer money"
@@ -69,21 +68,17 @@ If you author no questions, the tool falls back to asking the missing fields as 
 
 ## The loop
 
-1. **Echo the query ONCE.** On the user's **first** message, set `state.raw_query` so the tool
-   emits a single `{"query": "..."}` object on line 1 ahead of the response envelope. On every
-   **later** turn (answers to clarifications), **omit** `raw_query` — the query echo must appear
-   exactly once per conversation and never be repeated in subsequent responses.
-2. **Extract & normalize.** Pull `role`, `subject`, `focus`, `objective`, and any named data
+1. **Extract & normalize.** Pull `role`, `subject`, `focus`, `objective`, and any named data
    sources from the prompt. Map role synonyms ("marketer" → Marketing, "PO"/"product manager"
    → Product Owner). Roles outside {Marketing, Product Owner} are **not valid** — treat as missing.
-3. **Validate.** Run `validate`. It returns `complete`, `missing[]`, and `ready_for`.
-4. **If incomplete → clarify.** Author one contextual question per missing field into
+2. **Validate.** Run `validate`. It returns `complete`, `missing[]`, and `ready_for`.
+3. **If incomplete → clarify.** Author one contextual question per missing field into
    `state.questions` (choices derived from the user's prompt), then run `clarify`. Batch every
    missing field in a single response — never drip them one at a time.
-5. **If complete → plan.** Run `plan`. It applies defaults (data_sources → all five if none
+4. **If complete → plan.** Run `plan`. It applies defaults (data_sources → all five if none
    named, market → Vietnam, time_range → last_90_days, sentiment → negative when the goal targets
    negative feedback, else all) and returns the PLAN_CONFIRMATION envelope.
-6. **On bad/garbled input → error.** Run `error` with a clear message.
+5. **On bad/garbled input → error.** Run `error` with a clear message.
 
 **Output ONLY the JSON the tool prints — nothing else.** No greeting, no explanation, no
 "let me know" sentence. Your entire response is the tool's JSON output verbatim.
@@ -107,14 +102,12 @@ Full JSON schemas with examples: `references/output-schema.md`.
 
 ## Output contract reminder
 
-Your response is **JSON only** (no prose). On the **first** turn the tool prints two objects
-(JSONL — one per line): the query echo, then the response envelope.
+Your response is **JSON only** (no prose) — a single response envelope object:
 
 ```
-{"query": "I am a Marketer in fintech company. Please help me research VNG"}
 {"response_type": "CLARIFICATION_REQUIRED", "payload": { ... }}
 ```
 
-On **later** turns it prints only the response envelope (no `query` line). `response_type` is
-always exactly one of: `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`. Always run the tool
-to generate these — do not write the JSON by hand.
+`response_type` is always exactly one of: `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`.
+There is **no `query` field** — the frontend owns that value and forwards it elsewhere; it is out
+of this skill's scope. Always run the tool to generate the JSON — do not write it by hand.
