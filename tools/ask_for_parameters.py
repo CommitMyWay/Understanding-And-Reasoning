@@ -16,7 +16,7 @@ Usage (CLI):
         --session my-session \
         --field market \
         --reason "Cannot scope data fetch without geographic target" \
-        --question "Which market should I analyze MoMo in?" \
+        --question "Which market should I analyze Zalopay in?" \
         --options '["Vietnam", "Southeast Asia", "Global"]'
 
     # After user responds, agent submits the answer back
@@ -29,7 +29,7 @@ Output (request):
     {
         "status": "awaiting_user",
         "missing_field": "market",
-        "question": "Which market should I analyze MoMo in?",
+        "question": "Which market should I analyze Zalopay in?",
         "options": ["Vietnam", "Southeast Asia", "Global"],
         "instruction": "DO NOT proceed until respond is called with user answer."
     }
@@ -56,8 +56,8 @@ from datetime import datetime, timezone
 
 VALID_FIELDS = ["subject", "market", "target_user", "goal", "focus", "data_source"]
 FIELD_OPTIONS = {
-    # target_user: multiple-choice (who is running the analysis)
-    "target_user": ["product", "marketing", "quality"],
+    # target_user: Marketer (MKT) or Product Owner (PO) — quality role removed
+    "target_user": ["product", "marketing"],
     # data_source: multiple-choice (which platforms)
     "data_source": ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit", "All"],
     # goal: free-text — no validation, any non-empty string accepted

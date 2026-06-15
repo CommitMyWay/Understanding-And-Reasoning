@@ -30,9 +30,8 @@ import sys
 # ---------------------------------------------------------------------------
 
 ROLE_LABELS = {
-    "product":   "Product (PO)",
-    "marketing": "Marketing (MKT)",
-    "quality":   "Quality Engineering (QE)",
+    "product":   "Product Owner (PO)",
+    "marketing": "Marketer (MKT)",
 }
 
 # ---------------------------------------------------------------------------
@@ -40,7 +39,7 @@ ROLE_LABELS = {
 # ---------------------------------------------------------------------------
 
 INITIAL_PLAN_TEMPLATES = {
-    # PO lens: what to build / fix next on the roadmap
+    # PO lens: feature gaps, pain points, roadmap prioritisation
     "product": [
         "Fetch {subject} reviews from {data_source_str} in {market} ({time_range})",
         "Tag each review with a feature label (Login, Payment, Onboarding, Performance, Other)",
@@ -49,23 +48,14 @@ INITIAL_PLAN_TEMPLATES = {
         "Extract representative user quotes for the top 3 pain points",
         "Map findings to roadmap impact (High / Med / Low) and draft prioritised action items",
     ],
-    # MKT lens: brand perception, sentiment, acquisition signals
+    # MKT lens: brand perception, voice of customer, acquisition signals
     "marketing": [
         "Fetch {subject} reviews and mentions from {data_source_str} in {market} ({time_range})",
         "Run sentiment trend analysis — positive / neutral / negative ratio over time",
-        "Extract top brand perception keywords and recurring themes",
+        "Extract Voice of Customer (VoC) keywords and top brand perception themes",
         "Identify promoter language (what happy users say) vs detractor language",
-        "Flag acquisition friction points mentioned in onboarding and first-use reviews",
-        "Recommend 3–5 messaging angles and campaign talking points backed by user language",
-    ],
-    # QE lens: bugs, crashes, regressions for dev/QA handoff
-    "quality": [
-        "Fetch 1-star and 2-star {subject} reviews from {data_source_str} in {market} ({time_range})",
-        "Classify defects by category: crash / UI bug / performance / data integrity / other",
-        "Score each defect class by frequency and user-impact severity",
-        "Break down by platform (iOS App Store vs Android CH Play) and recency (last 30 days vs prior)",
-        "Flag potential regressions — spike in complaint volume compared to previous period",
-        "Output structured bug-report summary with severity labels, ready for Jira / dev handoff",
+        "Flag acquisition & retention friction points mentioned in onboarding and first-use reviews",
+        "Compile Customer Dictionary and messaging insights aligned to research goal",
     ],
 }
 

@@ -136,8 +136,8 @@ RETRY_QUESTIONS = {
 # Static options for multiple-choice fields
 STATIC_OPTIONS = {
     "target_user": {
-        "en": ["Product", "Marketing", "Quality"],
-        "vi": ["Product", "Marketing", "Quality"],
+        "en": ["Product Owner", "Marketer"],
+        "vi": ["Product Owner", "Marketer"],
     },
     "data_source": {
         "en": ["App Store", "CH Play", "Youtube", "Voz", "Tinhte", "Reddit", "All sources"],
@@ -148,16 +148,12 @@ STATIC_OPTIONS = {
 # Goal hint examples based on target_user (shown in the question)
 GOAL_EXAMPLES = {
     "product": {
-        "en": "e.g. 'pain points in checkout flow', 'features users want most', 'UX issues in onboarding'",
-        "vi": "ví dụ: 'vấn đề trong luồng thanh toán', 'tính năng user mong muốn', 'lỗi UX khi đăng ký'",
+        "en": "e.g. 'pain points in checkout flow', 'features users want most', 'UX friction in onboarding'",
+        "vi": "ví dụ: 'điểm nghẽn trong luồng thanh toán', 'tính năng user mong muốn', 'khoảng trống sản phẩm'",
     },
     "marketing": {
-        "en": "e.g. 'brand sentiment trends', 'what drives users to competitors', 'perception of the app'",
-        "vi": "ví dụ: 'xu hướng cảm nhận thương hiệu', 'lý do user chuyển sang đối thủ'",
-    },
-    "quality": {
-        "en": "e.g. 'most reported crashes', 'performance issues on Android', 'regression since last update'",
-        "vi": "ví dụ: 'lỗi crash phổ biến nhất', 'vấn đề hiệu năng trên Android', 'regression sau bản cập nhật'",
+        "en": "e.g. 'brand sentiment trends', 'what drives users to competitors', 'voice of customer insights'",
+        "vi": "ví dụ: 'xu hướng cảm nhận thương hiệu', 'lý do user chuyển sang đối thủ', 'từ điển khách hàng'",
     },
 }
 

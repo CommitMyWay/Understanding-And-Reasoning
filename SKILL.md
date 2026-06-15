@@ -1,6 +1,6 @@
 ---
 name: voc-task-understanding
-description: "Voice of Customer (VoC) — Task Understanding & Interactive Reasoning. Parses user intent for product/marketing/quality analysis requests, demands missing parameters via ask_for_parameters tool before proceeding, builds a structured role-based analysis plan (PO, MKT, QE), and maintains conversation context for deep-dive follow-ups. Trigger: any request to analyze an app, product, brand, or customer feedback (e.g., 'analyze MoMo', 'why is Login complained about', 'deep dive checkout issues', 'what are users saying about feature X'). Outputs a flat intent JSON for downstream skills (data source, report). DO NOT use for data fetching (/voc-datasource) or report rendering (/voc-report)."
+description: "Voice of Customer (VoC) — Task Understanding & Interactive Reasoning. Parses user intent for product/marketing analysis requests, demands missing parameters via ask_for_parameters tool before proceeding, builds a structured role-based analysis plan (PO, MKT), and maintains conversation context for deep-dive follow-ups. Trigger: any request to analyze an app, product, brand, or customer feedback (e.g., 'analyze MoMo', 'why is Login complained about', 'deep dive checkout issues', 'what are users saying about feature X'). Outputs a flat intent JSON for downstream skills (data source, report). DO NOT use for data fetching (/voc-datasource) or report rendering (/voc-report)."
 ---
 
 # VoC Task Understanding & Interactive Reasoning
@@ -35,17 +35,22 @@ When the intent is fully resolved and confirmed, the skill emits a **flat intent
     {
       "id": "q_market",
       "question": "Which market should I analyze TikTok Shop in?",
-      "choices": ["Vietnam", "Indonesia", "UK", "USA", "...", "Suggest another market...", "Other (type your own)..."]
+      "choices": ["Vietnam", "Indonesia", "UK", "Other (type your own)..."]
     },
     {
       "id": "q_target_user",
       "question": "What is the goal of this TikTok Shop analysis?",
-      "choices": ["Product", "Marketing", "Quality", "Suggest another goal type...", "Other (type your own)..."]
+      "choices": ["Product Owner", "Marketer", "Other (type your own)..."]
+    },
+    {
+      "id": "q_goal",
+      "question": "What specifically would you like to find out about TikTok Shop?",
+      "choices": ["Other (type your own)..."]
     }
   ]
 }
 ```
-`choices` **always** ends with `"Suggest another {field}..."` + `"Other (type your own)..."`.
+`choices` = **top 3 curated options** (subject-aware) + `"Other (type your own)..."`. Max 4 items per question.
 
 #### Shape 3 — focusArea
 ```json
@@ -61,15 +66,22 @@ When the intent is fully resolved and confirmed, the skill emits a **flat intent
   "query": "go",
   "subject": "TikTok Shop",
   "market": "UK",
-  "target_user": "quality",
-  "goal": "crash in payment",
+  "target_user": "marketing",
+  "goal": "brand sentiment by feature",
   "focus": null,
   "data_source": ["App Store", "CH Play"],
   "filters": {"time_range": "last_90_days", ...},
   "clarifications_done": [...],
-  "plan_steps": [...]
+  "plan_steps": [...],
+  "suggestedDeepDives": [
+    "Extract 'Customer Dictionary' (Voice of Customer)",
+    "List potential ASO keywords",
+    "Build User Persona",
+    "Write Feature Request Brief"
+  ]
 }
 ```
+`suggestedDeepDives` — role-based next-step options shown after analysis completes (step 7–8 in product flow). Pre-filtered to exclude suggestions whose keywords overlap with the user's `goal` or `focus`. Max 5 items. Array may be empty if all options were already requested.
 
 ---
 
@@ -91,7 +103,7 @@ When the intent is fully resolved and confirmed, the skill emits a **flat intent
 
 - [ ] `subject` — non-null, resolved via parse or `ask_for_parameters`
 - [ ] `market` — non-null, geographic or demographic scope
-- [ ] `target_user` — exactly one of `product` | `marketing` | `quality`
+- [ ] `target_user` — exactly one of `product` | `marketing`
 - [ ] `goal` — non-null free-text research objective
 - [ ] User responded with an explicit confirmation keyword (see Confirmation Keywords)
 - [ ] PII stripped from all fields via `context_manager.strip_pii`
@@ -158,7 +170,7 @@ tools/ask_for_parameters.py respond
 - One call per missing field. Never bundle two fields in one call.
 - If `status = max_retries_reached`, use a sensible default and proceed without asking again.
 - If `status = invalid_value`, call `request` again for that field.
-- `target_user` valid values: `product`, `marketing`, `quality`.
+- `target_user` valid values: `product`, `marketing`.
 - `goal` valid values: any non-empty free-text string (no validation).
 - `data_source` valid values: `App Store`, `CH Play`, `Youtube`, `Voz`, `Tinhte`, `Reddit`, `All`.
 
@@ -170,7 +182,7 @@ tools/ask_for_parameters.py respond
 |---|---|
 | **Subject** | Product, app, brand, or feature being analyzed (e.g., "MoMo", "Login flow"). Required. |
 | **Market** | Geographic or demographic scope (e.g., "Vietnam", "Southeast Asia"). Required. |
-| **Target User** | Who is running the analysis: `product` (PO lens) \| `marketing` (MKT lens) \| `quality` (QE lens). Required. |
+| **Target User** | Who is running the analysis: `product` (PO lens) \| `marketing` (MKT lens). Required. |
 | **Goal** | Free-text research objective, e.g. "pain points in payment flow", "features users want most". Required. |
 | **Data Source** | Which platforms to pull reviews from. Default = all: `App Store`, `CH Play`, `Youtube`, `Voz`, `Tinhte`, `Reddit`. Updatable during plan confirmation. |
 | **Focus** | Sub-scope for deep dives (e.g., "Login", "Payment timeout"). Optional, set in Mode 2. |
@@ -258,14 +270,13 @@ Agent:  → ask_for_parameters(field=market, question="Which market should I ana
 User:   Vietnam
 Agent:  → ask_for_parameters.respond(field=market, value="Vietnam")
         → ask_for_parameters(field=target_user, question="What is the goal of this MoMo analysis?",
-                             options=["Product","Marketing","Quality"])
-User:   Quality
-Agent:  → ask_for_parameters.respond(field=target_user, value="quality")
+                             options=["Product Owner","Marketer"])
+User:   Product Owner
+Agent:  → ask_for_parameters.respond(field=target_user, value="product")
         → ask_for_parameters(field=goal, question="What specifically would you like to find out about MoMo?
-                             (e.g. 'most reported crashes', 'performance issues on Android')")
-User:   crash patterns in payment flow
-User:   Product
-Agent:  → ask_for_parameters.respond(field=goal, value="product")
+                             (e.g. 'pain points in checkout flow', 'features users want most')")
+User:   pain points in payment flow
+Agent:  → ask_for_parameters.respond(field=goal, value="pain points in payment flow")
         → verify Pre-Output Gate ✅
         → conversation_planner(mode=initial)
         → "Here's my plan: [5 steps]. Shall I proceed?"
@@ -294,3 +305,4 @@ Agent:  → classify: Mode 2 (deep-dive, all required fields already resolved)
 | `max_retries_reached` returned | Field asked too many times without valid answer | Use default value, log in `clarifications_done`, proceed |
 | PII in emitted JSON | `strip_pii` not called | Always call `context_manager.strip_pii` before emit |
 | `goal` invalid value | User gave unexpected answer | `ask_for_parameters respond` returns `invalid_value`; call request again |
+| `target_user` = "quality" | Stale prompt referencing removed role | Valid values are `product` and `marketing` only; ask again |

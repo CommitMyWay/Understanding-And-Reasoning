@@ -5,25 +5,27 @@ skill asks clarifying questions.
 
 ---
 
-## Core Rule: One Question Per Turn
+## Core Rule: All Missing Questions in One Batch
 
-**Never ask more than one question in a single agent response.**
+**Ask ALL missing required fields in a single agent response.**
 
-Pick the highest-priority missing field, ask only that, and wait for the user's answer
-before proceeding. This keeps the conversation feeling natural and avoids overwhelming
-the user with a form-like list of questions.
+Call `clarification_engine.py --batch` to get every missing question at once, then emit
+them together via `response_formatter.py questions`. The FE renders all questions as cards
+and the user answers them in one interaction. This eliminates extra round-trips and
+reduces total wait time from ~12s (one-by-one) to ~5s (batch).
 
 ---
 
 ## Priority Order
 
-When multiple required fields are missing, ask in this order:
+When rendering batch questions, use this order (same as `FIELD_PRIORITY` in `clarification_engine.py`):
 
 | Priority | Field | Rationale |
 |---|---|---|
 | 1 | `subject` | Nothing can be scoped without knowing what to analyze |
-| 2 | `market` | Determines data source geography; needed before any fetch |
-| 3 | `goal` | Determines the analysis lens; affects plan structure |
+| 2 | `market` | Determines data source geography; drives smart market suggestions |
+| 3 | `target_user` | Determines analysis lens (`product` / `marketing` / `quality`) |
+| 4 | `goal` | Free-text research objective; shown last (benefits from knowing `target_user` for examples) |
 
 ---
 

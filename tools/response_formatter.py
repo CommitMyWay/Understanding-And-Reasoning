@@ -61,10 +61,92 @@ import sys
 # ---------------------------------------------------------------------------
 
 ROLE_LABELS = {
-    "product":   "Product (PO)",
-    "marketing": "Marketing (MKT)",
-    "quality":   "Quality Engineering (QE)",
+    "product":   "Product Owner (PO)",
+    "marketing": "Marketer (MKT)",
 }
+
+# ---------------------------------------------------------------------------
+# Role-based deep-dive suggestions shown after analysis completes
+# Shown to user as clickable next-step options (step 7-8 in product flow).
+# Excludes suggestions whose keywords overlap with what user already requested.
+# ---------------------------------------------------------------------------
+
+DEEP_DIVE_SUGGESTIONS = {
+    "marketing": {
+        "en": [
+            "Extract 'Customer Dictionary' (Voice of Customer)",
+            "List potential ASO keywords",
+            "Build User Persona",
+            "Create Sentiment Analysis table by feature",
+            "Write Feature Request Brief",
+        ],
+        "vi": [
+            "Trích xuất 'Từ điển khách hàng' (Voice of Customer)",
+            "Lập danh sách Từ khóa ASO tiềm năng",
+            "Xây dựng Chân dung Khách hàng (User Persona)",
+            "Lập bảng Phân tích Cảm xúc (Sentiment Analysis) theo tính năng",
+            "Viết báo cáo Đề xuất Tính năng (Feature Request Brief)",
+        ],
+    },
+    "product": {
+        "en": [
+            "Technical Bottlenecks Warning Report",
+            "Identify 'Happy Path' risks",
+            "Build Prioritization Matrix",
+            "Feature Gap Analysis",
+        ],
+        "vi": [
+            "Báo cáo Cảnh báo Điểm nghẽn Kỹ thuật (Technical Bottlenecks)",
+            "Nhận diện rủi ro 'Happy Path'",
+            "Lập bảng chấm điểm Ưu tiên (Prioritization Matrix)",
+            "Phân tích Khoảng trống Sản phẩm (Feature Gap Analysis)",
+        ],
+    },
+}
+
+# Keywords used to detect overlap with user's existing goal/focus
+# Each suggestion maps to a list of unique keywords for exclusion matching
+_SUGGESTION_KEYWORDS = {
+    "Extract 'Customer Dictionary' (Voice of Customer)":          ["customer dictionary", "voice of customer", "voc"],
+    "Trích xuất 'Từ điển khách hàng' (Voice of Customer)":        ["từ điển", "voice of customer", "voc"],
+    "List potential ASO keywords":                                 ["aso", "keyword"],
+    "Lập danh sách Từ khóa ASO tiềm năng":                        ["aso", "từ khóa"],
+    "Build User Persona":                                          ["persona", "user persona"],
+    "Xây dựng Chân dung Khách hàng (User Persona)":               ["chân dung", "persona"],
+    "Create Sentiment Analysis table by feature":                  ["sentiment", "sentiment analysis"],
+    "Lập bảng Phân tích Cảm xúc (Sentiment Analysis) theo tính năng": ["cảm xúc", "sentiment"],
+    "Write Feature Request Brief":                                 ["feature request", "brief"],
+    "Viết báo cáo Đề xuất Tính năng (Feature Request Brief)":     ["đề xuất tính năng", "feature request"],
+    "Technical Bottlenecks Warning Report":                        ["bottleneck", "technical"],
+    "Báo cáo Cảnh báo Điểm nghẽn Kỹ thuật (Technical Bottlenecks)": ["điểm nghẽn", "bottleneck"],
+    "Identify 'Happy Path' risks":                                 ["happy path"],
+    "Nhận diện rủi ro 'Happy Path'":                              ["happy path"],
+    "Build Prioritization Matrix":                                 ["prioritization", "matrix", "priority"],
+    "Lập bảng chấm điểm Ưu tiên (Prioritization Matrix)":         ["ưu tiên", "prioritization"],
+    "Feature Gap Analysis":                                        ["gap analysis", "feature gap"],
+    "Phân tích Khoảng trống Sản phẩm (Feature Gap Analysis)":     ["khoảng trống", "gap analysis"],
+}
+
+
+def _build_deep_dive_suggestions(target_user: str, goal: str, focus: str, lang: str) -> list[str]:
+    """
+    Return role-based deep-dive suggestions, excluding any that overlap
+    with what the user already requested (goal or focus).
+    """
+    role_suggestions = DEEP_DIVE_SUGGESTIONS.get(target_user, {}).get(lang, [])
+    if not role_suggestions:
+        return []
+
+    already_requested = ((goal or "") + " " + (focus or "")).lower()
+
+    result = []
+    for suggestion in role_suggestions:
+        keywords = _SUGGESTION_KEYWORDS.get(suggestion, [])
+        if any(kw in already_requested for kw in keywords):
+            continue   # user already asked for this — skip
+        result.append(suggestion)
+
+    return result
 
 # Human-readable field labels for "Suggest another X..." suffix
 FIELD_LABELS = {
@@ -178,12 +260,33 @@ def fmt_plan(message: str, intent: dict) -> dict:
     """
     Stage 4: Final execution plan.
     Merges query into the full intent JSON. Strips internal-only fields.
+    Injects suggestedDeepDives — role-based next-step options, excluding
+    what the user already requested (goal/focus overlap detection).
     """
+    import re
     result = dict(intent)
     result.pop("_plan_summary", None)   # internal — not for FE
     result.pop("missing_required", None)
     result.pop("mode", None)
     result["query"] = message
+
+    # Detect language (Vietnamese diacritics in goal or market)
+    _vi = re.compile(
+        r"[àáâãèéêìíòóôõùúýăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỷỹỵ]",
+        re.I,
+    )
+    lang = "vi" if _vi.search(
+        (intent.get("goal") or "") + " " + (intent.get("market") or "")
+    ) else "en"
+
+    suggestions = _build_deep_dive_suggestions(
+        target_user=intent.get("target_user", ""),
+        goal=intent.get("goal", ""),
+        focus=intent.get("focus", ""),
+        lang=lang,
+    )
+    result["suggestedDeepDives"] = suggestions
+
     return result
 
 
