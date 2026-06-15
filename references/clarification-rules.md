@@ -34,21 +34,24 @@ Map synonyms before validating: `marketer/mkt/growth/brand → Marketing`;
 - **Uniform shape.** Every question object carries all six keys (`key`, `type`, `question`,
   `choices`, `recommended`, `allow_other`); `recommended` is `null` when there is no good default.
 
-## Default question bank
+## Questions are authored from context, not canned
 
-These live in `tools/voc_reasoning.py` (the authoritative source) and may be tailored per request
-via the `overrides` field in STATE (e.g. fintech-specific focus options).
+The tool ships **no hard-coded answer choices**. For each field it knows only a neutral question
+template + a default `type` (`FIELD_META` in `tools/voc_reasoning.py`). The **agent authors** the
+actual question objects into `state.questions`, deriving `choices`/`recommended` from the user's
+real prompt so they are specific to the subject.
 
-| field      | type            | choices (≤3) | recommended |
-|------------|-----------------|--------------|-------------|
-| `role`     | `single_select` | Marketing · Product Owner | none |
-| `subject`  | `text`          | — | none |
-| `focus`    | `single_select` | Transaction failures & speed · UI/UX experience · Promotions & rewards | Transaction failures & speed |
-| `objective`| `single_select` | Find negative feedback & propose improvements · Benchmark against competitors · QA bug sweep | Find negative feedback & propose improvements |
+| field      | default type    | choices |
+|------------|-----------------|---------|
+| `role`     | `single_select` | **fixed**: Marketing · Product Owner (the only spec-allowed values) |
+| `subject`  | `text`          | agent-authored from context (often none → free text) |
+| `focus`    | `single_select` | agent-authored from context (e.g. for VNG: "ZaloPay payments & transfers") |
+| `objective`| `single_select` | agent-authored from context (e.g. "Benchmark vs MoMo/VNPay") |
 
-When the request context is richer than the generic bank (e.g. you already know the product is a
-fintech wallet), tailor the `choices`/`recommended` for `focus` and `objective` via `overrides`
-so the options feel specific — still keeping ≤3 choices and `allow_other: true`.
+Example — for *"research VNG"*, author focus choices about VNG's products, not generic
+placeholders. The tool then enforces the structure: ≤3 choices, no literal "Other", `allow_other`
+always `true`, all six keys present, and `role` choices forced to the two valid roles. If the agent
+authors nothing, the tool falls back to asking the missing fields as free text (empty `choices`).
 
 ## Edge case — off-topic or vague answer
 

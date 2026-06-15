@@ -90,47 +90,15 @@ NEGATIVE_HINT = re.compile(
     re.IGNORECASE,
 )
 
-# Default question bank. Each question object always carries the SAME six keys so
-# the FE receives a uniform shape ("nhớ trả đủ field cho mỗi json").
-# Rule: select questions hold AT MOST 3 choices; `allow_other` is always true so the
-# FE renders a free-text box without "Other" ever being a semantic choice.
-QUESTION_BANK = {
-    "role": {
-        "key": "role",
-        "type": "single_select",
-        "question": "Which role best describes you? This tailors the analysis and the recommendations.",
-        "choices": ["Marketing", "Product Owner"],
-        "recommended": None,
-        "allow_other": True,
-    },
-    "subject": {
-        "key": "subject",
-        "type": "text",
-        "question": "Which company or product do you want to research? (e.g. Zalopay)",
-        "choices": [],
-        "recommended": None,
-        "allow_other": True,
-    },
-    "focus": {
-        "key": "focus",
-        "type": "single_select",
-        "question": "Which feature or topic should we focus on?",
-        "choices": ["Transaction failures & speed", "UI/UX experience", "Promotions & rewards"],
-        "recommended": "Transaction failures & speed",
-        "allow_other": True,
-    },
-    "objective": {
-        "key": "objective",
-        "type": "single_select",
-        "question": "What is your primary objective for this research?",
-        "choices": [
-            "Find negative feedback & propose improvements",
-            "Benchmark against competitors",
-            "QA bug sweep",
-        ],
-        "recommended": "Find negative feedback & propose improvements",
-        "allow_other": True,
-    },
+# Neutral question TEMPLATES per gating field. The tool intentionally ships NO
+# canned answer choices: the LLM authors contextual choices from the user's actual
+# prompt and passes them in state["questions"]. `role` is the ONLY field whose
+# choices are fixed, because the spec restricts roles to exactly two values.
+FIELD_META = {
+    "role": {"type": "single_select", "question": "Which role best describes you?"},
+    "subject": {"type": "text", "question": "Which company or product do you want to research?"},
+    "focus": {"type": "single_select", "question": "Which feature or topic should we focus on?"},
+    "objective": {"type": "single_select", "question": "What is your primary objective for this research?"},
 }
 
 MAX_CHOICES = 3
@@ -218,37 +186,49 @@ def build_validate(state):
     }
 
 
-def _question_for(field, overrides):
-    """Build one question object from the bank, applying optional overrides."""
-    base = QUESTION_BANK.get(field)
-    if base is None:
-        # Unknown field requested: emit a safe free-text question.
-        base = {
-            "key": field,
-            "type": "text",
-            "question": "Could you clarify '%s'?" % field,
-            "choices": [],
-            "recommended": None,
-            "allow_other": True,
-        }
-    question = dict(base)
-    over = overrides.get(field, {}) if isinstance(overrides, dict) else {}
-    for k in ("type", "question", "recommended"):
-        if k in over:
-            question[k] = over[k]
-    if "choices" in over and isinstance(over["choices"], list):
-        question["choices"] = over["choices"]
-    # Defensive: the literal "Other" is never a semantic choice — allow_other
-    # gives the user a free-text box instead. Strip it even from overrides.
-    if isinstance(question.get("choices"), list):
-        question["choices"] = [
-            c for c in question["choices"] if str(c).strip().lower() != "other"
-        ]
-    # Defensive: enforce the max-3-choices rule no matter what.
-    if isinstance(question.get("choices"), list) and len(question["choices"]) > MAX_CHOICES:
-        question["choices"] = question["choices"][:MAX_CHOICES]
-    question["allow_other"] = bool(question.get("allow_other", True))
-    return question
+def _normalize_question(q):
+    """Validate & format a single (LLM-authored or skeletal) question object.
+
+    The CONTENT (question text, choices, recommended) comes from the LLM so it is
+    contextual to the user's prompt — the tool never invents canned choices. The
+    tool only GUARANTEES the structure: all six keys present, <=3 choices, the
+    literal "Other" stripped, and allow_other always true.
+    """
+    key = str(q.get("key") or "").strip()
+    meta = FIELD_META.get(key, {})
+
+    qtype = q.get("type") or meta.get("type") or "text"
+    question_text = q.get("question") or meta.get("question") or ("Please clarify '%s'." % key)
+
+    choices = q.get("choices")
+    if not isinstance(choices, list):
+        choices = []
+    if key == "role":
+        # The one spec-fixed field: choices are always the two valid roles.
+        choices = list(ROLE_CHOICES)
+    else:
+        choices = [c for c in choices if isinstance(c, str) and c.strip()]
+        # The literal "Other" is never a semantic choice — allow_other handles it.
+        choices = [c for c in choices if c.strip().lower() != "other"]
+        choices = choices[:MAX_CHOICES]
+        # A select with no choices is meaningless -> present it as free text.
+        if qtype in ("single_select", "multi_select") and not choices:
+            qtype = "text"
+
+    recommended = q.get("recommended")
+    if not isinstance(recommended, str) or not recommended.strip():
+        recommended = None
+    elif choices and recommended not in choices:
+        recommended = None
+
+    return {
+        "key": key,
+        "type": qtype,
+        "question": question_text,
+        "choices": choices,
+        "recommended": recommended,
+        "allow_other": True,  # always — the user can always type a free answer
+    }
 
 
 def build_clarification(state):
@@ -257,28 +237,31 @@ def build_clarification(state):
     The LLM may pass `clarify_fields` to ask only specific fields (edge case:
     re-asking just the ambiguous one) and `reclarify_reason` for a 2nd-round reason.
     """
-    overrides = state.get("overrides")
-    if not isinstance(overrides, dict):
-        overrides = {}
-    explicit = state.get("clarify_fields")
-    if isinstance(explicit, list) and any(isinstance(f, str) for f in explicit):
-        # Trust the LLM's explicit list — this is the override path for fields
-        # whose VALUE is semantically ambiguous (e.g. objective "measure something")
-        # which compute_missing cannot detect, so we do NOT intersect with it.
-        fields = [f for f in explicit if isinstance(f, str)]
+    authored = state.get("questions")
+    if isinstance(authored, list) and authored:
+        # Primary path: the LLM authored contextual questions (choices derived
+        # from the user's prompt). Trust their field selection; just format.
+        raw = [q for q in authored if isinstance(q, dict) and str(q.get("key") or "").strip()]
     else:
-        fields = compute_missing(state)
+        # Defensive fallback: no authored questions -> ask the missing fields with
+        # neutral templates and NO canned choices (free text via allow_other).
+        explicit = state.get("clarify_fields")
+        if isinstance(explicit, list) and any(isinstance(f, str) for f in explicit):
+            fields = [f for f in explicit if isinstance(f, str)]
+        else:
+            fields = compute_missing(state)
+        raw = [{"key": f} for f in fields]
 
-    if not fields:
+    if not raw:
         # Nothing left to clarify -> the state is complete; planning is the
         # correct output. Never emit a CLARIFICATION_REQUIRED with zero questions.
         return build_plan(state)
 
-    questions = [_question_for(f, overrides) for f in fields]
+    questions = [_normalize_question(q) for q in raw]
 
     payload = {}
     reason = state.get("reclarify_reason")
-    if reason:
+    if isinstance(reason, str) and reason.strip():
         payload["reason"] = reason
     payload["suggestedQuestions"] = questions
     return {"response_type": "CLARIFICATION_REQUIRED", "payload": payload}

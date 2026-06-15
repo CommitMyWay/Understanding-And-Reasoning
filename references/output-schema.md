@@ -1,26 +1,31 @@
 # Output Schema — Frontend JSON Contract
 
-Every turn that has user input produces **two separate JSON objects** (JSONL, one per line):
+The agent's response is **JSON only** — no natural-language prose around it.
 
-1. The **query echo**: `{"query": "<raw user input>"}`
+On the **first** turn of a conversation the agent emits two objects (JSONL, one per line):
+
+1. The **query echo**: `{"query": "<the user's first input>"}` — emitted **once** only.
 2. The **response envelope**: one of `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`.
 
 ```
-{"query": "I am a Marketer in fintech company..."}
+{"query": "I am a Marketer in fintech company. Please help me research VNG"}
 {"response_type": "CLARIFICATION_REQUIRED", "payload": { ... }}
 ```
 
-`response_type` is **always exactly** one of the three strings above (case-sensitive).
+On **every later turn** (answers to clarifications) only the response envelope is emitted —
+the `query` line is **not** repeated. `response_type` is **always exactly** one of the three
+strings above (case-sensitive).
 
 ---
 
 ## 1. Query echo
 
 ```json
-{ "query": "I am a Marketer in fintech company. Please help me research negative feedback ..." }
+{ "query": "I am a Marketer in fintech company. Please help me research VNG" }
 ```
 
-Emitted whenever `state.raw_query` is set. It is a standalone object on its own line.
+Emitted **once**, on the first user input only (when `state.raw_query` is set). It is a
+standalone object on its own line and is never embedded inside the response envelope.
 
 ---
 
@@ -31,6 +36,9 @@ ambiguous/invalid.
 
 ### First round (no `reason`)
 
+Choices are **authored by the agent from the user's prompt**, never canned. The example below is
+for *"I am a Marketer ... research VNG"* — note the choices are specific to VNG's products:
+
 ```json
 {
   "response_type": "CLARIFICATION_REQUIRED",
@@ -39,16 +47,16 @@ ambiguous/invalid.
       {
         "key": "focus",
         "type": "single_select",
-        "question": "Which feature or topic should we focus on?",
-        "choices": ["Transaction failures & speed", "UI/UX experience", "Promotions & rewards"],
-        "recommended": "Transaction failures & speed",
+        "question": "Which VNG product or area should we focus on?",
+        "choices": ["ZaloPay payments & transfers", "ZaloPay wallet top-up", "Zalo app experience"],
+        "recommended": "ZaloPay payments & transfers",
         "allow_other": true
       },
       {
         "key": "objective",
         "type": "single_select",
-        "question": "What is your primary objective for this research?",
-        "choices": ["Find negative feedback & propose improvements", "Benchmark against competitors", "QA bug sweep"],
+        "question": "What is your primary objective for researching VNG?",
+        "choices": ["Find negative feedback & propose improvements", "Benchmark vs MoMo/VNPay", "Spot top user complaints"],
         "recommended": "Find negative feedback & propose improvements",
         "allow_other": true
       }

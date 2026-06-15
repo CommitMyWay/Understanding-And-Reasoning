@@ -37,7 +37,7 @@ user's new input into it, then pass it to the tool. Shape:
 
 ```json
 {
-  "raw_query": "<the user's most recent raw input>",
+  "raw_query": "<the user's FIRST raw input — set on turn 1 ONLY, omit afterwards>",
   "role": null,            // -> "Marketing" | "Product Owner" (normalize synonyms yourself)
   "subject": null,         // company/product, e.g. "Zalopay"
   "focus": null,           // feature/topic, e.g. "transfer money"
@@ -48,27 +48,45 @@ user's new input into it, then pass it to the tool. Shape:
   "filters": { "time_range": null, "sentiment": null, "keywords": [] },
   "clarify_fields": null,  // optional: ask ONLY these fields (edge-case re-clarify)
   "reclarify_reason": null,// optional: human reason shown on a 2nd clarification round
-  "overrides": {}          // optional: per-field {choices/recommended/question} overrides
+  "questions": []          // YOU author these — contextual question objects (see below)
 }
 ```
 
+### You author the clarifying questions (no canned choices)
+
+The tool ships **no hard-coded answer choices**. When clarification is needed, YOU build each
+question object and put them in `state.questions`, deriving the `choices`/`recommended` from the
+user's actual prompt so they are specific (e.g. for "research VNG" the focus choices should be
+about VNG's products like ZaloPay payments — not generic placeholders). Each object:
+
+```json
+{ "key": "focus", "type": "single_select", "question": "...", "choices": ["...", "..."], "recommended": "...", "allow_other": true }
+```
+
+Rules the tool enforces for you: `<= 3` choices, never the literal "Other" in `choices`,
+`allow_other` always `true`, and `role` choices are always exactly `Marketing` / `Product Owner`.
+If you author no questions, the tool falls back to asking the missing fields as free text.
+
 ## The loop
 
-1. **Always echo the query.** Whenever there is user input, the tool emits a separate
-   `{"query": "..."}` object (line 1) ahead of the response envelope (line 2). Put the raw input
-   in `state.raw_query` so it is echoed.
+1. **Echo the query ONCE.** On the user's **first** message, set `state.raw_query` so the tool
+   emits a single `{"query": "..."}` object on line 1 ahead of the response envelope. On every
+   **later** turn (answers to clarifications), **omit** `raw_query` — the query echo must appear
+   exactly once per conversation and never be repeated in subsequent responses.
 2. **Extract & normalize.** Pull `role`, `subject`, `focus`, `objective`, and any named data
    sources from the prompt. Map role synonyms ("marketer" → Marketing, "PO"/"product manager"
    → Product Owner). Roles outside {Marketing, Product Owner} are **not valid** — treat as missing.
 3. **Validate.** Run `validate`. It returns `complete`, `missing[]`, and `ready_for`.
-4. **If incomplete → clarify.** Run `clarify`. It batches one question per missing field
-   (all in a single response — never drip them one at a time). Then write a short, friendly
-   human message alongside the JSON.
+4. **If incomplete → clarify.** Author one contextual question per missing field into
+   `state.questions` (choices derived from the user's prompt), then run `clarify`. Batch every
+   missing field in a single response — never drip them one at a time.
 5. **If complete → plan.** Run `plan`. It applies defaults (data_sources → all five if none
    named, market → Vietnam, time_range → last_90_days, sentiment → negative when the goal targets
-   negative feedback, else all) and returns the PLAN_CONFIRMATION envelope. Summarize the plan in
-   plain language for the user too.
+   negative feedback, else all) and returns the PLAN_CONFIRMATION envelope.
 6. **On bad/garbled input → error.** Run `error` with a clear message.
+
+**Output ONLY the JSON the tool prints — nothing else.** No greeting, no explanation, no
+"let me know" sentence. Your entire response is the tool's JSON output verbatim.
 
 ## Clarification rules (summary)
 
@@ -77,6 +95,8 @@ user's new input into it, then pass it to the tool. Shape:
 - Batch **every** missing question into one `CLARIFICATION_REQUIRED` response.
 - Each select question offers **1–3 choices**, never more, and **always** sets `allow_other: true`
   so the user can type a free answer. Never put the string "Other" inside `choices`.
+- **Choices are contextual, never canned.** Derive them from the user's prompt. Only `role` has
+  fixed choices (`Marketing` / `Product Owner`).
 - **Edge case — off-topic / vague answer.** If the user answers a clarifying question with
   something invalid (e.g. role = "DEV", or objective = "measure something"), set
   `clarify_fields` to just that field and `reclarify_reason` to a short explanation, then run
@@ -87,12 +107,14 @@ Full JSON schemas with examples: `references/output-schema.md`.
 
 ## Output contract reminder
 
-The frontend reads **two separate JSON objects** per turn (JSONL — one per line):
+Your response is **JSON only** (no prose). On the **first** turn the tool prints two objects
+(JSONL — one per line): the query echo, then the response envelope.
 
 ```
-{"query": "I am a Marketer in fintech company..."}
+{"query": "I am a Marketer in fintech company. Please help me research VNG"}
 {"response_type": "CLARIFICATION_REQUIRED", "payload": { ... }}
 ```
 
-`response_type` is always exactly one of: `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`.
-Always run the tool to generate these — do not write the JSON by hand.
+On **later** turns it prints only the response envelope (no `query` line). `response_type` is
+always exactly one of: `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`. Always run the tool
+to generate these — do not write the JSON by hand.

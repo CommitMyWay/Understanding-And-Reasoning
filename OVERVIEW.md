@@ -38,8 +38,8 @@ or generate reports.
 # Fully specified prompt -> PLAN_CONFIRMATION
 python tools/voc_reasoning.py plan '{"raw_query":"I am a Marketer ... Zalopay transfer money","role":"Marketing","subject":"Zalopay","focus":"transfer money","objective":"research negative 1,2 star feedback and propose improvements","data_sources":["App Store","CH Play"]}'
 
-# Missing fields -> CLARIFICATION_REQUIRED
-python tools/voc_reasoning.py clarify '{"raw_query":"I want to research Zalopay","subject":"Zalopay"}'
+# Missing fields -> CLARIFICATION_REQUIRED (agent authors contextual choices)
+python tools/voc_reasoning.py clarify '{"raw_query":"I am a Marketer, research VNG","role":"Marketing","subject":"VNG","questions":[{"key":"focus","type":"single_select","question":"Which VNG product should we focus on?","choices":["ZaloPay payments","ZaloPay wallet top-up","Zalo app"],"recommended":"ZaloPay payments","allow_other":true},{"key":"objective","type":"single_select","question":"What is your objective?","choices":["Find negative feedback & improve","Benchmark vs MoMo/VNPay"],"allow_other":true}]}'
 
 # Re-clarify a bad role answer -> CLARIFICATION_REQUIRED with reason
 python tools/voc_reasoning.py clarify '{"raw_query":"I am a DEV","clarify_fields":["role"],"reclarify_reason":"DEV is not a supported role; pick Marketing or Product Owner."}'
