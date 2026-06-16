@@ -21,10 +21,10 @@ All JSON the frontend receives is produced by `tools/voc_reasoning.py` so the sc
 valid. You do the reasoning; the tool does the formatting.
 
 ```bash
-python tools/voc_reasoning.py validate '<state-json>'   # internal: complete? what's missing?
-python tools/voc_reasoning.py clarify  '<state-json>'   # -> CLARIFICATION_REQUIRED
-python tools/voc_reasoning.py plan     '<state-json>'   # -> PLAN_CONFIRMATION
-python tools/voc_reasoning.py error    '<message>' [--query '<raw input>']  # -> ERROR
+python3 tools/voc_reasoning.py validate '<state-json>'   # internal: complete? what's missing?
+python3 tools/voc_reasoning.py clarify  '<state-json>'   # -> CLARIFICATION_REQUIRED
+python3 tools/voc_reasoning.py plan     '<state-json>'   # -> PLAN_CONFIRMATION
+python3 tools/voc_reasoning.py error    '<message>' [--query '<raw input>']  # -> ERROR
 ```
 
 `validate` prints an internal helper object **for you** (not for the frontend). `clarify`, `plan`,

@@ -23,10 +23,10 @@ elsewhere); it is out of this skill's scope.
 Standard library only — no third-party dependencies.
 
 Usage:
-  python voc_reasoning.py validate '<state-json>'
-  python voc_reasoning.py clarify  '<state-json>'
-  python voc_reasoning.py plan     '<state-json>'
-  python voc_reasoning.py error    '<message>'
+  python3 voc_reasoning.py validate '<state-json>'
+  python3 voc_reasoning.py clarify  '<state-json>'
+  python3 voc_reasoning.py plan     '<state-json>'
+  python3 voc_reasoning.py error    '<message>'
 """
 
 import json
