@@ -17,7 +17,8 @@ envelope** object: one of `CLARIFICATION_REQUIRED`, `PLAN_CONFIRMATION`, `ERROR`
 ## 1. `CLARIFICATION_REQUIRED`
 
 Sent when the request is missing one or more **gating fields**, or when a previous answer was
-ambiguous/invalid.
+ambiguous/invalid. The agent may also include a non-gating `competitors` question when benchmark
+targets are still unclear and asking would materially improve the final plan.
 
 ### First round (no `reason`)
 
@@ -119,9 +120,16 @@ Sent when all four gating fields are present. Defaults are applied by the tool.
       }
     },
     "plan": {
-      "summary": "Through a Marketing lens, research Zalopay's 'transfer money' to ... Pull user reviews from App Store, Google Play over the last 90 days (sentiment: negative).",
-      "estimated_scope": "≈300–500 reviews across 2 sources"
-    }
+      "summary": "Through a Marketing lens, research Zalopay's 'transfer money' to ... Pull user reviews from App Store, Google Play over the last 90 days (sentiment: negative)."
+    },
+    "resolved_apps": [
+      {
+        "name": "Zalopay",
+        "playId": "com.vng.zalopay",
+        "appStoreId": "1112345678",
+        "evidence": "https://play.google.com/store/apps/details?id=com.vng.zalopay"
+      }
+    ]
   }
 }
 ```
@@ -140,6 +148,15 @@ Sent when all four gating fields are present. Defaults are applied by the tool.
 | `filters.time_range` | review window | `"last_90_days"` |
 | `filters.sentiment`  | `all` \| `negative` | `negative` if goal targets negatives, else `all` |
 | `filters.keywords`   | extra search keywords | `[]` |
+
+### `resolved_apps` fields
+
+| field        | meaning |
+|--------------|---------|
+| `name`       | display name of the app |
+| `playId`     | Google Play package name, or `null` if unverified |
+| `appStoreId` | App Store numeric ID, or `null` if unverified |
+| `evidence`   | store URL used to verify at least one ID |
 
 ### Canonical `data_sources` keys
 

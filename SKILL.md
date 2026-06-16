@@ -75,8 +75,24 @@ If you author no questions, the tool falls back to asking the missing fields as 
 3. **If incomplete → clarify.** Author one contextual question per missing field into
    `state.questions` (choices derived from the user's prompt), then run `clarify`. Batch every
    missing field in a single response — never drip them one at a time.
-4. **If complete → plan.** Run `plan`. It applies defaults (data_sources → all five if none
-   named, market → Vietnam, time_range → last_90_days, sentiment → negative when the goal targets
+4. **If complete → resolve apps, then plan.** Before `plan`, resolve the subject and each
+   competitor against real store pages when possible. Use web search/fetch to confirm Google Play
+   package names and App Store IDs, then store them in `state.resolved_apps`:
+
+   ```json
+   [
+     {
+       "name": "ZaloPay",
+       "playId": "com.vinagame.zalopay",
+       "appStoreId": "1107454800",
+       "evidence": "https://play.google.com/store/apps/details?id=com.vinagame.zalopay"
+     }
+   ]
+   ```
+
+   Only include IDs you could verify from a real store page. If you cannot verify an ID, set that
+   field to `null`. Then run `plan`. It applies defaults (data_sources → all five if none named,
+   market → Vietnam, time_range → last_90_days, sentiment → negative when the goal targets
    negative feedback, else all) and returns the PLAN_CONFIRMATION envelope.
 5. **On bad/garbled input → error.** Run `error` with a clear message.
 
@@ -85,8 +101,10 @@ If you author no questions, the tool falls back to asking the missing fields as 
 
 ## Clarification rules (summary)
 
-- Only **four fields gate** the pipeline: role, subject, focus, objective. `data_sources` never
-  blocks — if the user named none, it defaults to all five.
+- Only **four fields gate** the pipeline: role, subject, focus, objective. `data_sources` and
+  `competitors` never block — if the user named no sources, they default to all five; if
+  competitors are unspecified, ask only when that comparison would materially clarify the request,
+  otherwise they default to `[subject]`.
 - Batch **every** missing question into one `CLARIFICATION_REQUIRED` response.
 - Each select question offers **1–3 choices**, never more, and **always** sets `allow_other: true`
   so the user can type a free answer. Never put the string "Other" inside `choices`.

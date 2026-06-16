@@ -267,13 +267,6 @@ def build_clarification(state):
     return {"response_type": "CLARIFICATION_REQUIRED", "payload": payload}
 
 
-def build_scope(data_sources):
-    n = max(1, len(data_sources))
-    low, high = n * 150, n * 250
-    unit = "source" if n == 1 else "sources"
-    return "≈{:,}–{:,} reviews across {} {}".format(low, high, n, unit)
-
-
 def build_summary(intent):
     sources = ", ".join(
         DATA_SOURCE_LABELS.get(s, s) for s in intent["data_sources"]
@@ -346,11 +339,20 @@ def build_plan(state):
             "keywords": keywords,
         },
     }
-    plan = {
-        "summary": build_summary(intent),
-        "estimated_scope": build_scope(data_sources),
+    resolved_apps = state.get("resolved_apps")
+    if not isinstance(resolved_apps, list):
+        resolved_apps = []
+
+    payload = {
+        "intent": intent,
+        "plan": {
+            "summary": build_summary(intent),
+        },
     }
-    return {"response_type": "PLAN_CONFIRMATION", "payload": {"intent": intent, "plan": plan}}
+    if resolved_apps:
+        payload["resolved_apps"] = resolved_apps
+
+    return {"response_type": "PLAN_CONFIRMATION", "payload": payload}
 
 
 def build_error(message):

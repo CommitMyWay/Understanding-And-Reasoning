@@ -18,6 +18,9 @@ If the user named **none**, default to all five (`app_store, google_play, youtub
 do not ask. Because the max-3-choices rule would be violated by a 5-option source picker, the
 agent never asks `data_sources` as a clarification; it is always inferred or defaulted.
 
+`competitors` is also **not** a gating field, but the agent may ask for it as an extra
+clarification when the user clearly wants benchmarking and no comparison set is obvious.
+
 ## Role normalization
 
 Map synonyms before validating: `marketer/mkt/growth/brand → Marketing`;
