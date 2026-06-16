@@ -14,12 +14,21 @@ A request is **ready to plan** only when all four are present and valid:
 | `objective` | the research goal | "research negative feedback ... propose advices to improve" |
 
 `data_sources` is **not** a gating field. If the user named specific sources, use exactly those.
-If the user named **none**, default to all five (`app_store, google_play, youtube, tinhte, voz`) —
-do not ask. Because the max-3-choices rule would be violated by a 5-option source picker, the
-agent never asks `data_sources` as a clarification; it is always inferred or defaulted.
+If the user named **none**, default to all five (`app_store, google_play, youtube, tinhte, voz`).
+For broad prompts, the agent should usually still ask a **source preference** question as part of
+the research intake so the user can narrow the crawl, but if the user leaves it unspecified the
+semantic default remains all five.
 
 `competitors` is also **not** a gating field, but the agent may ask for it as an extra
 clarification when the user clearly wants benchmarking and no comparison set is obvious.
+
+The key distinction is:
+
+- **Gating** decides whether the request can technically move to planning.
+- **Clarification quality** decides whether the setup feels like a serious research intake.
+
+For broad prompts, do not confuse those two. A request may be technically plannable after the four
+gating fields are known, but still be too shallow from a UX and research-quality perspective.
 
 ## Role normalization
 
@@ -31,6 +40,11 @@ Map synonyms before validating: `marketer/mkt/growth/brand → Marketing`;
 
 - **Batch everything.** Put one question per missing gating field into a single
   `CLARIFICATION_REQUIRED` response. Never ask them one turn at a time.
+- **Prefer a research brief for broad prompts.** For requests like `"analyze Shopee"` or
+  `"research customer feedback"`, ask a fuller intake bundle rather than only the strict minimum.
+  In practice, that usually means 5–8 total questions/decisions across:
+  `role`, `subject`, `focus`, `objective`, `competitors`, `market`, `time_range`,
+  `data_sources`, `sentiment`, or `keywords`, depending on what the user already specified.
 - **1–3 choices** per select question. Never more than three.
 - **Always `allow_other: true`.** The FE shows a free-text box; the user is never forced into a
   preset. Do not add the literal `"Other"` to `choices`.
@@ -50,6 +64,32 @@ real prompt so they are specific to the subject.
 | `subject`  | `text`          | agent-authored from context (often none → free text) |
 | `focus`    | `single_select` | agent-authored from context (e.g. for VNG: "ZaloPay payments & transfers") |
 | `objective`| `single_select` | agent-authored from context (e.g. "Benchmark vs MoMo/VNPay") |
+
+Common high-value **optional** questions for broad requests:
+
+| field         | when to ask | good examples |
+|---------------|-------------|---------------|
+| `competitors` | user wants comparison, benchmarking, or the subject sits in a crowded category | "MoMo", "Lazada", "TikTok Shop" |
+| `market`      | geography affects review mix, UX, or competitors | "Vietnam", "Indonesia", "Southeast Asia" |
+| `time_range`  | freshness matters or the user did not specify a review window | "last_30_days", "last_90_days", "last_180_days" |
+| `data_sources`| source mix meaningfully changes findings; broad prompts should usually expose this choice | "App stores", "Forums", "Video/social" |
+| `sentiment`   | the user did not say whether to focus on negative-only vs all feedback | "negative", "mixed", "all" |
+| `keywords`    | the request hints at a narrow scenario | "refund", "checkout", "delivery" |
+
+### Example standard for a vague request
+
+For a prompt like `"analyze Shopee"`, asking only 1–2 questions is usually too shallow. A better
+batch would typically cover:
+
+1. the user's role,
+2. the product area to focus on,
+3. the research objective,
+4. which competitors to benchmark,
+5. which market to focus on,
+6. what time window to analyze,
+7. which source groups to crawl.
+
+If the prompt is even broader, add source preferences or a sentiment lens as well.
 
 Example — for *"research VNG"*, author focus choices about VNG's products, not generic
 placeholders. The tool then enforces the structure: ≤3 choices, no literal "Other", `allow_other`

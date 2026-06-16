@@ -75,7 +75,25 @@ If you author no questions, the tool falls back to asking the missing fields as 
 3. **If incomplete → clarify.** Author one contextual question per missing field into
    `state.questions` (choices derived from the user's prompt), then run `clarify`. Batch every
    missing field in a single response — never drip them one at a time.
-4. **If complete → resolve apps, then plan.** Before `plan`, resolve the subject and each
+4. **Prefer a deep-research intake, not the bare minimum.** The four gating fields decide whether
+   planning is technically allowed, but your behavior should feel like a serious research setup
+   flow rather than a minimal validator.
+
+   - For short or broad prompts like `"analyze Shopee"` or `"research negative feedback"`, do
+     **not** stop at only the missing gating fields if the request is still underspecified in a way
+     that would weaken the plan.
+   - In those cases, ask a richer bundled brief that usually includes some mix of:
+     `competitors`, `market`, `time_range`, `data_sources`, `sentiment`, and `keywords`, in
+     addition to any missing gating fields.
+   - **Include a source-selection question when the prompt is broad.** Even though the backend
+     defaults to all sources, the setup should still give the user a chance to narrow the crawl.
+     Present `data_sources` as an optional tuning question, with the semantic default being
+     **all sources** if the user does not express a preference.
+   - Aim for **5–8 total questions/decisions** for broad prompts unless the user already provided
+     strong detail. Keep them concise, high-signal, and directly useful.
+   - Avoid redundant questions. If the user already specified a field clearly, do not ask it again.
+   - Ask optional questions only when they would materially improve the downstream analysis plan.
+5. **If complete → resolve apps, then plan.** Before `plan`, resolve the subject and each
    competitor against real store pages when possible. Use web search/fetch to confirm Google Play
    package names and App Store IDs, then store them in `state.resolved_apps`:
 
@@ -94,7 +112,7 @@ If you author no questions, the tool falls back to asking the missing fields as 
    field to `null`. Then run `plan`. It applies defaults (data_sources → all five if none named,
    market → Vietnam, time_range → last_90_days, sentiment → negative when the goal targets
    negative feedback, else all) and returns the PLAN_CONFIRMATION envelope.
-5. **On bad/garbled input → error.** Run `error` with a clear message.
+6. **On bad/garbled input → error.** Run `error` with a clear message.
 
 **Output ONLY the JSON the tool prints — nothing else.** No greeting, no explanation, no
 "let me know" sentence. Your entire response is the tool's JSON output verbatim.
@@ -105,6 +123,13 @@ If you author no questions, the tool falls back to asking the missing fields as 
   `competitors` never block — if the user named no sources, they default to all five; if
   competitors are unspecified, ask only when that comparison would materially clarify the request,
   otherwise they default to `[subject]`.
+- The gating fields define the minimum contract, **not** the ideal user experience. When the brief
+  is broad, ask enough extra questions to make the setup feel like a thoughtful research intake.
+- For prompts that are only a company/product name or a vague analysis request, it is usually too
+  shallow to ask only 1–2 questions. Prefer a richer bundle covering goal, focus, comparison set,
+  geography, and time horizon.
+- Source scope should usually be one of those extra questions for broad prompts. The default may
+  still be all five sources, but the user should be offered the chance to narrow the crawl.
 - Batch **every** missing question into one `CLARIFICATION_REQUIRED` response.
 - Each select question offers **1–3 choices**, never more, and **always** sets `allow_other: true`
   so the user can type a free answer. Never put the string "Other" inside `choices`.
